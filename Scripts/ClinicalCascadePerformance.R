@@ -4,7 +4,7 @@
 ## PURPOSE:  SSD - Clinical Cascade Performance
 ## REF ID:   "f5d11198"
 ## Date:     2022-11-03
-## Update:   2022-11-03
+## Update:   2022-11-09
 
 # LIBRARIES --------------------------------------------------------------------
 
@@ -23,11 +23,11 @@
     ref_id <- "f5d11198"
 
     # path to all MER data files
-    data <- here("Data/MER/")
+    data <- here("Data/")
 
     # path to current OUxIM data file
     file_path <- return_latest(folderpath = data,
-                               pattern = "Genie_OU_IM_South_Sudan_Frozen_Q4")
+                               pattern = "Genie_OU_IM_South_Sudan_Daily_2022-11-09")
 
 # Data -------------------------------------------------------------------------
 
@@ -40,7 +40,7 @@
     #                           "))
 
     # get information about the data for the final graph
-    get_file_metadata(file_path)
+    get_metadata(file_path)
 
 # Choose a Cascade -------------------------------------------------------------
 
@@ -64,9 +64,11 @@
     # You will be prompted to enter a cascade number
     return_cascade_plot(df_ssd, export = F)
 
-    # Un-comment and enter the name of the plot you selected in between the ""
-    # ex: plot_file_name = "KP_Cascade_FY22Q3"
-    plot_file_name = "KP_Cascade_FY22Q4"
+    # Un-comment and enter the name of the plot you selected in between " and the first _
+    # ex: If you select plot 13, plot_file_name = glue("KP_Cascade_{metadata$curr_pd})
+    plot_file_name = glue("KP_Cascade_{metadata$curr_pd}")
+    # 13 = glue("KP_Cascade_{metadata$curr_pd}")
+    # 1 =  glue("Standard_Cascade_{metadata$curr_pd}")
 
     # save the plot to the Images folder
     si_save(here(glue("Images/{plot_file_name}_{ref_id}.png")),
