@@ -4,7 +4,7 @@
 # REF ID:   8d2cb761 
 # LICENSE:  MIT
 # DATE:     2022-11-14
-# UPDATED: 
+# UPDATED:  2022-11-15
 
 # DEPENDENCIES ------------------------------------------------------------
   
@@ -19,6 +19,7 @@
   library(ggtext)
   library(ggrepel)
   library(janitor)
+  library(cascade)
 
 # GLOBAL VARIABLES -------------------------------------------------------------
   
@@ -27,7 +28,6 @@
   peds <- c("<01", "01-04", "05-09", "10-14", "<15")
   
   # metadata
-  
   ou_path <- si_path() %>% 
     return_latest("Genie_OU_IM_South_Sudan_Daily")
   
@@ -55,7 +55,6 @@
   site_df <- si_path() %>% 
     return_latest("Genie_SITE_IM_South_Sudan_Daily") %>%
     read_msd()
-  
   
   # time period data comes from OUxIM but should be the same for all levels
   full_pds <- (min(ou_df$fiscal_year) - 1) %>% 
@@ -278,7 +277,7 @@
     scale_color_manual(values = c(moody_blue_light, genoa_light), 
                        label = NULL) +
      labs(x = NULL, y = NULL,
-          title = glue("The spike in Q3 IIT had disparate impacts by age group and sex") %>% toupper,
+          title = glue("The increase in Q3 IIT had disparate impacts by age group and sex") %>% toupper,
           subtitle = glue("<span style='color:{moody_blue_light}'>Females</span> in most age groups continue to experience increased IIT into Q4<br>
                            <span style='color:{genoa_light}'>Males</span> in all age groups experienced a decrease in IIT from Q3 to Q4"),
           caption = glue("Note: IIT = TX_ML / TX_CURR - TX_NET_NEW + TX_NEW; ITT capped to 15%
@@ -306,7 +305,9 @@
                 names_glue = "{tolower(indicator)}")
   
   df_iit_partner <- df_iit_partner %>%
-    mutate(tx_curr_lag1 = tx_curr - tx_net_new) %>% 
+    mutate(tx_curr_lag1 = tx_curr - tx_net_new,
+           prime_partner_name = if_else(prime_partner_name == "Trustees Of Columbia University In The City Of New York", 
+                                        "Columbia Corporation", prime_partner_name)) %>% 
     rowwise() %>% 
     mutate(iit = tx_ml / sum(tx_curr_lag1, tx_new, na.rm = TRUE)) %>% 
     ungroup()
@@ -314,8 +315,9 @@
   df_partner_lab <- df_iit_partner %>% 
     filter(period == metadata$curr_pd) %>% 
     count(prime_partner_name, wt = tx_curr, sort = TRUE) %>% 
-    mutate(partner_lab = ifelse(n == max(n), glue("{prime_partner_name} - {label_number(1, scale_cut = cut_short_scale())(n)} [TX_CURR {pd_prior}]"),
-                             glue("{prime_partner_name} - {label_number(1, scale_cut = cut_short_scale())(n)}"))) %>%
+    mutate(partner_lab = ifelse(n == max(n), 
+                       glue("{prime_partner_name} - {label_number(1, scale_cut = cut_short_scale())(n)} [TX_CURR {pd_prior}]"),
+                       glue("{prime_partner_name} - {label_number(1, scale_cut = cut_short_scale())(n)}"))) %>%
     select(-n)
   
   partner_tx_order <- df_iit_partner %>% 
@@ -356,7 +358,7 @@
     scale_y_continuous(limits = c(0,.15),
                        label = percent_format(1),
                        oob = oob_squish) +
-    scale_color_manual(values = c(denim, genoa_light, scooter_light)) +
+    scale_color_manual(values = c(scooter_light, denim, genoa_light)) +
     coord_cartesian(clip = "off") +
     labs(x = NULL, y = NULL,
          size = "Site TX_CURR (1 period prior)",
@@ -374,100 +376,70 @@
   si_save(glue("Images/{metadata$curr_pd}_SSD_partner_iit.png"),
           scale = 1.5)  
   
-  # TODO: update this to be RTT by partner
+  # RTT by partner
   
-  # df_iit_rtt <- ou_df %>% 
-  #   filter(funding_agency == "USAID", 
-  #          indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW", "TX_RTT"), 
-  #          fiscal_year == "2022") %>%
-  #   pluck_totals() %>%
-  #   group_by(fiscal_year, country, indicator) %>% 
-  #   summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>% 
-  #   reshape_msd(include_type = FALSE) %>% 
-  #   pivot_wider(names_from = "indicator",
-  #               names_glue = "{tolower(indicator)}")
-  # 
-  # df_iit_rtt <- df_iit_rtt %>%
-  #   mutate(tx_curr_lag1 = tx_curr - tx_net_new) %>% 
-  #   rowwise() %>% 
-  #   mutate(iit = tx_ml / sum(tx_curr_lag1, tx_new, na.rm = TRUE)) %>% 
-  #   ungroup()
-  # 
-  # vct_itt_cntry <- ou_df %>% 
-  #   filter(funding_agency == "USAID", 
-  #          indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW", "TX_RTT"), 
-  #          fiscal_year == "2022") %>%
-  #   pluck_totals() %>%
-  #   group_by(fiscal_year, country, indicator) %>% 
-  #   summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>% 
-  #   reshape_msd(include_type = FALSE) %>% 
-  #   pivot_wider(names_from = "indicator",
-  #               names_glue = "{tolower(indicator)}") %>% 
-  #   filter(period == metadata$curr_pd) %>% 
-  #   mutate(tx_curr_lag1 = tx_curr - tx_net_new) %>% 
-  #   rowwise() %>% 
-  #   mutate(
-  #     iit = tx_ml / sum(tx_curr_lag1, tx_new, na.rm = TRUE)) %>% 
-  #   ungroup() %>% 
-  #   pull() %>% 
-  #   percent()
-  # 
-  # df_iit_rtt %>%
-  #   mutate(fiscal_year = str_sub(period, end = 4)) %>% 
-  #   filter(tx_curr_lag1 != 0) %>%
-  #   ggplot(aes(period, iit, size = tx_curr_lag1)) +
-  #   geom_point(position = position_jitter(width = .2, seed = 42),
-  #              na.rm = TRUE, color = denim,
-  #              alpha = .2) +
-  #   geom_smooth(aes(weight = tx_curr_lag1, group = country),
-  #               method = "loess",
-  #               formula = "y ~ x", se = FALSE, na.rm = TRUE,
-  #               linewidth = 1.5, color = golden_sand) +
-  #   scale_size(label = comma, guide = NULL) +
-  #   scale_y_continuous(limits = c(0,.15),
-  #                      label = percent_format(1),
-  #                      oob = oob_squish) +
-  #   coord_cartesian(clip = "off") +
-  #   labs(x = NULL, y = NULL,
-  #        size = "Site TX_CURR (1 period prior)",
-  #        title = glue("USAID MAINTAINED A RELATIVELY CONSTANT {vct_itt_cntry} IIT OVER FY22"),
-  #        subtitle = glue("A 1% increase Occured Q3 with a return to Q1 levels by Q4 
-  #                   while <span style='color:{denim}'>TX_CURR_LAG1</span> increased by approx. 1.6k people over the year"),
-  #        caption = glue("Note: IIT = TX_ML / TX_CURR - TX_NET_NEW + TX_NEW; ITT capped to 15%
-  #                       {metadata$caption} | US Agency for International Development")) +
-  #   si_style_ygrid() +
-  #   theme(panel.spacing = unit(.5, "line"),
-  #         axis.text = element_text(size = 8),
-  #         plot.subtitle = element_markdown())
-  # 
-  # si_save(glue("Images/{metadata$curr_pd}_SSD_OU_iit.png"),
-  #         scale = 1.5)  
-  # 
-  # df_iit_rtt %>%
-  #   mutate(fiscal_year = str_sub(period, end = 4)) %>% 
-  #   filter(tx_curr_lag1 != 0) %>%
-  #   ggplot(aes(period, tx_rtt)) +
-  #   geom_col(fill = "#2F2E6F", 
-  #            alpha = .75,
-  #            position = position_dodge(width = .5)) +
-  #   geom_hline(yintercept = 0) +
-  #   scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
-  #   labs(x = NULL, y = NULL, fill = NULL,
-  #        title = glue("DESPITE A BRIEF INCREASE IN IIT IN Q3, <span style='color:#2F2E6F'>TX_RTT</span> CONTINUED TO INCREASE OVER FY22"),
-  #        caption = glue("Source: {metadata$caption} | US Agency for International Development | {ref_id}")) +
-  #   si_style_ygrid() +
-  #   theme(panel.spacing = unit(.5, "line"),
-  #         legend.position = "none",
-  #         plot.title = element_markdown(),
-  #         strip.text = element_markdown())
-  # 
-  # si_save(glue("Images/{metadata$curr_pd}_SSD_partner_rtt.png"),
-  #         scale = 1.5)  
-  # 
-  
-  
+  df_iit_rtt_partner <- ou_df %>%
+    filter(indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW", "TX_RTT"),
+           fiscal_year == "2022") %>%
+    pluck_totals() %>%
+    group_by(fiscal_year, prime_partner_name, indicator) %>%
+    summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>%
+    reshape_msd(include_type = FALSE) %>%
+    pivot_wider(names_from = "indicator",
+                names_glue = "{tolower(indicator)}")
+
+  df_iit_rtt_partner <- df_iit_rtt_partner %>%
+    mutate(tx_curr_lag1 = tx_curr - tx_net_new,
+           prime_partner_name = if_else(prime_partner_name == "Trustees Of Columbia University In The City Of New York", 
+                                        "Columbia Corporation", prime_partner_name)) %>%
+    rowwise() %>%
+    mutate(iit = tx_ml / sum(tx_curr_lag1, tx_new, na.rm = TRUE)) %>%
+    ungroup()
+
+   df_iit_rtt_partner %>%
+     left_join(df_partner_lab, by = "prime_partner_name") %>% 
+     mutate(partner_lab_lab = factor(partner_lab, df_partner_lab$partner_lab),
+            fiscal_year = str_sub(period, end = 4)) %>% 
+     filter(tx_curr_lag1 != 0) %>%
+     ggplot(aes(period, tx_rtt, fill = prime_partner_name)) +
+     geom_col(alpha = .75,
+              position = position_dodge(width = 1)) +
+     facet_grid(~partner_lab) +
+     scale_fill_manual(values = c(scooter_light, denim, genoa_light)) +
+     scale_y_continuous(limits = c(0, 2000), 
+                        label = label_number(scale_cut = cut_short_scale())) +
+     labs(x = NULL, y = NULL, fill = NULL,
+          title = glue("All Partners saw an increase in TX_RTT from Q1") %>% toupper,
+          subtitle = glue("CDC Partner Columbia Corporation also saw an increase in RTT in Q2 
+                          while USAID and DOD Partners did not see a similar Q2 increase"),
+          caption = glue("Source: {metadata$caption} | US Agency for International Development | {ref_id}")) +
+    si_style_ygrid() +
+    theme(panel.spacing = unit(.5, "line"),
+          legend.position = "none",
+          plot.title = element_markdown(),
+          strip.text = element_markdown())
+
+   si_save(glue("Images/{metadata$curr_pd}_SSD_partner_rtt.png"),
+           scale = 1.5)  
+ 
   # ● OU FY22Q4 Target performance for KP and Priority Population
-  
+   plot_name
+   
+   # kp data
+   kp_cascade_data <- return_cascade(ou_df %>%
+                                       filter(fiscal_year == "2022"), 13) %>%
+     mutate(population = "KP")
+   
+   # priority populations data
+   # peds
+   peds_cascade_data <- return_cascade(ou_df %>%
+                                       filter(fiscal_year == "2022"), 4) %>%
+     mutate(population = "peds")
+   # AGYW
+   aypf_cascade_data <- return_cascade(ou_df %>%
+                                         filter(fiscal_year == "2022"), 8)%>%
+     mutate(population = "AGYW")
+
   # ● FSW and KP Clients HIV Testing quarterly Trend
   
 # PSNUxIM ----------------------------------------------------------------------
