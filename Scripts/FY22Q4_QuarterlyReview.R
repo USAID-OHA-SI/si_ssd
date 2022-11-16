@@ -23,7 +23,9 @@ library(ggrepel)
 
 ref_id <- "9071c744"
 
-path_genie <- "Data/Genie_SITE_IM_South_Sudan_Daily_2022-11-08.zip"
+# Site
+
+path_genie <- "Data/Genie_SITE_IM_South_Sudan_Daily_2022-11-15.zip"
 
 peds <- c("<01", "01-04", "05-09", "10-14", "<15")
 adults <- c("15-19", "20-24", "25-29", "30-34", "35-39", "40-44", "45-49",
@@ -53,6 +55,7 @@ pd_prior <- (convert_qtr_to_date(metadata$curr_pd) - months(3)) %>%
 df_tx <- df %>%
   filter(
     indicator == "TX_CURR",
+    funding_agency == "USAID",
    (standardizeddisaggregate == "Age/Sex/HIVStatus" & ageasentered %in% adults) |
       (standardizeddisaggregate == "Total Numerator")) %>%
   mutate(type = ifelse(standardizeddisaggregate == "Total Numerator",
@@ -92,8 +95,9 @@ df_achv <- df_tx %>%
 
 df_tx %>%
   filter(type == "Total") %>%
-  ggplot(aes(period, results, fill = as.character(fiscal_year))) +
-  geom_col(aes(y = disp_targets), na.rm = TRUE, fill = suva_grey, alpha = .2) +
+  mutate(period_state = glue("{period}_{snu1}")) %>%
+  ggplot(aes(period, results, fill = as.character(snu1))) +
+  geom_col(aes(y = targets), na.rm = TRUE, fill = suva_grey, alpha = .2) +
   geom_col(na.rm = TRUE) +
   geom_errorbar(aes(ymin = targets, ymax = targets), linetype = "dashed", width = .95, na.rm = TRUE) +
   geom_text(aes(label = gr_lab, y = gr_label_position),
@@ -102,14 +106,12 @@ df_tx %>%
   facet_wrap(~ fct_reorder2(geo_gr_lab, period, targets), scales = "free_y") +
   scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
   scale_x_discrete(breaks = unique(df_tx$period)[grep("Q(4)", unique(df_tx$period))]) +
-  scale_fill_manual(values = c(scooter_light, scooter)) +
+  scale_fill_manual(values = c(denim_light, burnt_sienna_light)) +
   labs(
     x = NULL, y = NULL,
     title = glue("ONLY {df_achv[df_achv$type == 'Total',]$n} of USAID's regions reached their {metadata$curr_fy_lab} treatment targets") %>% toupper(),
-    subtitle = "Current on treatment by region and quarterly growth rate",
-    # subtitle = "Current on treatment by region and growth rate needed in Q4 to reach target",
-    caption = glue( # "Note: quarterly growth rate needed calculated as a compound annual growth rate
-      "{metadata$caption} | US Agency for International Development")) +
+    subtitle = "Current on treatment by state and quarterly growth rate",
+    caption = glue("{metadata$caption} | US Agency for International Development")) +
   si_style_ygrid() +
   theme(
     legend.position = "none",
@@ -123,7 +125,9 @@ si_save(paste0(metadata$curr_pd, "_SSD-_tx-curr-growth_regional.png"),
 # IIT --------------------------------------------------------------------------
 
 df_iit <- df %>% 
-  filter(indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW")) %>%
+  filter(indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW"),
+         funding_agency == "USAID",
+         fiscal_year == "2022") %>%
   pluck_totals() %>%
   group_by(fiscal_year, snu1, psnu, indicator) %>% 
   summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>% 
@@ -132,9 +136,6 @@ df_iit <- df %>%
               names_glue = "{tolower(indicator)}")
 
 df_iit <- df_iit %>%
-  # group_by(psnu) %>% 
-  # mutate(tx_curr_lag1 = lag(tx_curr, n = 1, order_by = period)) %>% 
-  # ungroup() %>% 
   mutate(tx_curr_lag1 = tx_curr - tx_net_new) %>% 
   rowwise() %>% 
   mutate(iit = tx_ml / sum(tx_curr_lag1, tx_new, na.rm = TRUE)) %>% 
@@ -143,7 +144,6 @@ df_iit <- df_iit %>%
 df_snu_lab <- df_iit %>% 
   filter(period == metadata$curr_pd) %>% 
   count(snu1, wt = tx_curr, sort = TRUE) %>% 
-  # mutate(snu1_lab = glue("{snu1} - {label_number(1, scale_cut = cut_short_scale())(n)}")) %>% 
   mutate(snu1_lab = ifelse(n == max(n), glue("{snu1} - {label_number(1, scale_cut = cut_short_scale())(n)} [TX_CURR {pd_prior}]"),
                            glue("{snu1} - {label_number(1, scale_cut = cut_short_scale())(n)}"))) %>%
   select(-n)
@@ -172,35 +172,35 @@ vct_itt_cntry <- df %>%
 
 df_iit %>%
   left_join(df_snu_lab, by = "snu1") %>% 
-  mutate(snu1_lab = factor(snu1_lab, df_snu_lab$snu1_lab),
-         fiscal_year = str_sub(period, end = 4)) %>% 
+  mutate(fiscal_year = str_sub(period, end = 4)) %>% 
   filter(tx_curr_lag1 != 0) %>%
   ggplot(aes(period, iit, size = tx_curr_lag1)) +
-  geom_point(position = position_jitter(width = .2, seed = 42),
-             na.rm = TRUE, color = scooter,
+  geom_point(aes(color = snu1), 
+             position = position_jitter(width = .2, seed = 42),
+             na.rm = TRUE,
              alpha = .2) +
-  geom_smooth(aes(weight = tx_curr_lag1, group = snu1_lab),
+  geom_smooth(aes(weight = tx_curr_lag1, group = snu1, color = snu1),
               method = "loess",
               formula = "y ~ x", se = FALSE, na.rm = TRUE,
-              linewidth = 1.5, color = golden_sand) +
-  facet_wrap(~snu1_lab) +
+              linewidth = 1.5) +
+  facet_wrap(~snu1) +
   scale_size(label = comma, guide = NULL) +
-  scale_x_discrete(labels = pd_brks) +
   scale_y_continuous(limits = c(0,.25),
                      label = percent_format(1),
                      oob = oob_squish) +
+  scale_color_manual(values = c(denim, burnt_sienna)) +
   coord_cartesian(clip = "off") +
   labs(x = NULL, y = NULL,
        size = "Site TX_CURR (1 period prior)",
-       title = glue("USAID ENDED THE YEAR WITH IIT of {vct_itt_cntry} with 1 region 
-                    trending downward and the other trending upwards") %>% toupper,
-       subtitle = "County IIT rates within each region",
+       title = glue("Performance varied by State") %>% toupper, 
+       subtitle = glue("Central Equatoria is trending downward while Western Equatoria trending upwards") %>% toupper,
        caption = glue("Note: IIT = TX_ML / TX_CURR - TX_NET_NEW + TX_NEW; ITT capped to 25%
                         {metadata$caption} | US Agency for International Development")) +
   si_style_ygrid() +
   theme(panel.spacing = unit(.5, "line"),
         axis.text = element_text(size = 8),
-        plot.subtitle = element_markdown())
+        plot.subtitle = element_markdown(), 
+        legend.position = "none")
 
 si_save(glue("Images/{metadata$curr_pd}_SSD_region_iit.png"),
         scale = 1.5)  
@@ -209,6 +209,7 @@ si_save(glue("Images/{metadata$curr_pd}_SSD_region_iit.png"),
 
 df_tx_kp <- df %>%
   filter(
+    funding_agency == "USAID",
     indicator == "TX_CURR",
     (standardizeddisaggregate == "KeyPop/HIVStatus") |
       (standardizeddisaggregate == "Total Numerator")) %>%
@@ -263,7 +264,7 @@ df_tx_kp %>%
   labs(
     x = NULL, y = NULL,
     title = glue("ONLY {df_achv[df_achv$type == 'Total',]$n} of USAID's regions reached their {metadata$curr_fy_lab} treatment targets among FSWs") %>% toupper(),
-    subtitle = "Current FSWs on treatment by region and quarterly growth rate",
+    subtitle = "Current FSWs on treatment by state and quarterly growth rate",
     caption = glue("{metadata$caption} | US Agency for International Development")) +
   si_style_ygrid() +
   theme(
@@ -271,10 +272,15 @@ df_tx_kp %>%
     panel.spacing = unit(.5, "picas"),
     axis.text.x = element_text(size = 8))
 
+si_save(paste0(metadata$curr_pd,"_SSD-KP_tx-curr-snu-achv.png"),
+        path = "Images",
+        scale = 1.5)
+
 # ACHIEVEMENT ------------------------------------------------------------------
 
 df_achv <- df %>% 
-  filter(indicator == "TX_CURR", 
+  filter(funding_agency == "USAID", 
+         indicator == "TX_CURR", 
          (standardizeddisaggregate == "Age/Sex/HIVStatus" & ageasentered %in% adults) |
            (standardizeddisaggregate == "Total Numerator"),
          fiscal_year == metadata$curr_fy) %>%
@@ -317,7 +323,7 @@ df_achv %>%
   coord_cartesian(clip = "off") +
   labs(x = glue("{metadata$curr_fy} Targets (log scale)"), y = "Target Achievement",
        fill = "Target Achievement", size = glue("{metadata$curr_fy_lab} Targets"),
-       title = glue("{df_underachv$Total} USAID counties failed to reach the 90% of their {metadata$curr_fy_lab} treatment targets") %>% toupper(),
+       title = glue("{df_underachv$Total} Counties failed to reach the 90% of their {metadata$curr_fy_lab} treatment targets") %>% toupper(),
        subtitle = "Counties under the achivement threshold are labeled",
        caption = glue("Note: Achievement capped at 110% 
                         {metadata$caption} | US Agency for International Development")) +
@@ -326,7 +332,7 @@ df_achv %>%
         legend.position = "none") 
 
 
-si_save(paste0(metadata$curr_pd,"_SSD-_tx-curr-psnu-achv.png"),
+si_save(paste0(metadata$curr_pd,"_SSD-_tx-curr-state-county-achv.png"),
         path = "Images",
         scale = 1.5)
 
