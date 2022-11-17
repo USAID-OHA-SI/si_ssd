@@ -1,10 +1,11 @@
 # PROJECT:  si_ssd
 # AUTHOR:   J.Hoehner | USAID
-# PURPOSE:  Complete request for visuals from 2022-11-14
+# PURPOSE:  Complete request for visuals from 2022-11-14, used to make 
+#           SSD_FY22Q4DataReview.pptx
 # REF ID:   8d2cb761 
 # LICENSE:  MIT
 # DATE:     2022-11-14
-# UPDATED:  2022-11-15
+# UPDATED:  2022-11-17
 
 # DEPENDENCIES ------------------------------------------------------------
   
@@ -95,6 +96,84 @@
 
 # OU x IM ----------------------------------------------------------------------
   
+  # TX-CURR Target Performance by SNU County/ military
+  
+  ou_df_curr <-  ou_df %>%
+    filter(
+      fiscal_year == metadata$curr_fy,
+      funding_agency == "USAID",
+      indicator == "TX_CURR",
+      (standardizeddisaggregate == "Age/Sex/HIVStatus" & ageasentered %in% peds) |
+        (standardizeddisaggregate == "Total Numerator")) %>%
+    mutate(type = ifelse(standardizeddisaggregate == "Total Numerator",
+                         "Total", "Peds")) %>%
+    group_by(fiscal_year, country, indicator, type) %>%
+    summarise(across(c(targets, starts_with("qtr")), sum, na.rm = TRUE),
+              .groups = "drop") %>%
+    reshape_msd("quarters") %>%
+    select(-results_cumulative) %>%
+    arrange(type, country, period)
+  
+  ou_df_curr <- ou_df_curr %>%
+    mutate(
+      growth_rate_req =
+        case_when(period == metadata$curr_pd ~
+                    ((targets / results)^(1 / (4 - metadata$curr_qtr))) - 1)) %>%
+    group_by(type) %>%
+    fill(growth_rate_req, .direction = "updown") %>%
+    mutate(
+      growth_rate = (results / lag(results, order_by = period)) - 1,
+      growth_rate = na_if(growth_rate, Inf)) %>%
+    ungroup() %>%
+    mutate(
+      geo_gr_lab = case_when(
+        is.infinite(growth_rate_req) ~ glue("{toupper(country)}"),
+        growth_rate_req < 0 ~ glue("{toupper(country)}\nTarget achieved"),
+        growth_rate_req < .1 ~ glue("{toupper(country)}\n{percent(growth_rate_req, 1)}"),
+        TRUE ~ glue("{toupper(country)}\n{percent(growth_rate_req, 1)}")),
+      gr_lab = case_when(fiscal_year == metadata$curr_fy ~ 
+                           glue("{percent(growth_rate, 1)} ({comma(results)})")),
+      gr_lab = stringr::str_replace(gr_lab, "NA", "0"),
+      gr_label_position = 7300,
+      disp_targets = case_when(fiscal_year == metadata$curr_fy ~ targets), 
+      amount_diff = targets - results, 
+      pct_change = round_half_up((results - targets)/abs(targets) * 100),0)
+  
+  # percentage change from q1 to q4
+  oupct_change_curr <- ou_df_curr %>%
+    filter(type == "Total") %>%
+    select(pct_change) %>%
+    filter(pct_change == max(as.numeric(pct_change))) %>%
+    pull()
+  
+  ou_df_curr %>%
+    filter(type == "Total") %>%
+    ggplot(aes(period, results, fill = as.character(period))) +
+    geom_col(aes(y = disp_targets), na.rm = TRUE, fill = suva_grey, alpha = .2) +
+    geom_col(na.rm = TRUE) +
+    geom_errorbar(aes(ymin = targets, ymax = targets), 
+                  linetype = "dashed", width = .95, na.rm = TRUE) +
+    geom_text(aes(label = gr_lab, y = gr_label_position),
+              family = "Source Sans Pro", color = "white", size = 9 / .pt,
+              vjust = -.5, na.rm = TRUE) +
+    scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
+    scale_x_discrete(breaks = unique(ou_df_curr$period)[grep("Q(4)", unique(ou_df_curr$period))]) +
+    scale_fill_manual(values = c(scooter_light, scooter_light, scooter_light, scooter)) +
+    labs(
+      x = NULL, y = NULL,
+      title = glue("aaabbbccc") %>% toupper(),
+      subtitle = "xxxyyy",
+      caption = glue("{metadata$caption} | US Agency for International Development")) +
+    si_style_ygrid() +
+    theme(
+      legend.position = "none",
+      panel.spacing = unit(.5, "picas"),
+      axis.text.x = element_text(size = 8))
+  
+  si_save(paste0(metadata$curr_pd, "_SSD_tx-curr-targets.png"),
+          path = "Images",
+          scale = 0.8)
+  
   # ● Treatment Gain / Loss Trends (TX-NET-NEW and Gain/Loss) at OU DATIM data
   
   df_nn <- ou_df %>% 
@@ -125,7 +204,7 @@
     labs(x = NULL, y = NULL, fill = NULL,
          title = glue("<span style='color:{scooter_light}'>TX_NET_NEW</span> DROPPED IN Q3, REBOUNDED BY Q4"),
          subtitle = glue("TX_NEW stayed relatively constant"),
-         caption = glue("Source: {metadata$caption} | US Agency for International Development | {ref_id}")) +
+         caption = glue("{metadata$caption} | US Agency for International Development")) +
     si_style_ygrid() +
     theme(panel.spacing = unit(.5, "line"),
           legend.position = "none",
@@ -151,7 +230,9 @@
   df_iit_rtt <- df_iit_rtt %>%
     mutate(tx_curr_lag1 = tx_curr - tx_net_new) %>% 
     rowwise() %>% 
-    mutate(iit = tx_ml / sum(tx_curr_lag1, tx_new, na.rm = TRUE)) %>% 
+    mutate(iit = tx_ml / sum(tx_curr_lag1, tx_new, na.rm = TRUE), 
+           iit_label = percent(iit), 
+           qtr_label = glue("{period} ({iit_label})")) %>% 
     ungroup()
   
   vct_itt_cntry <- ou_df %>% 
@@ -176,24 +257,19 @@
   df_iit_rtt %>%
     mutate(fiscal_year = str_sub(period, end = 4)) %>% 
     filter(tx_curr_lag1 != 0) %>%
-    ggplot(aes(period, iit, size = tx_curr_lag1)) +
-    geom_point(position = position_jitter(width = .2, seed = 42),
-               na.rm = TRUE, color = denim,
-               alpha = .2) +
+    ggplot(aes(qtr_label, iit)) +
     geom_smooth(aes(weight = tx_curr_lag1, group = country),
                 method = "loess",
                 formula = "y ~ x", se = FALSE, na.rm = TRUE,
                 linewidth = 1.5, color = old_rose_light) +
-    scale_size(label = comma, guide = NULL) +
     scale_y_continuous(limits = c(0,.15),
-                       label = percent_format(1),
+                       label = NULL,
                        oob = oob_squish) +
     coord_cartesian(clip = "off") +
     labs(x = NULL, y = NULL,
          size = "Site TX_CURR (1 period prior)",
          title = glue("USAID MAINTAINED A RELATIVELY CONSTANT {vct_itt_cntry} IIT OVER FY22"),
-         subtitle = glue("A 1% increase Occurred in Q3 with a return to Q1 levels by Q4 
-                    while <span style='color:{denim}'>TX_CURR_LAG1</span> increased by approx. 1.6k people over the year"),
+         subtitle = glue("A 1% increase Occurred in Q3"),
          caption = glue("Note: IIT = TX_ML / TX_CURR - TX_NET_NEW + TX_NEW; ITT capped to 15%
                         {metadata$caption} | US Agency for International Development")) +
     si_style_ygrid() +
@@ -202,10 +278,12 @@
           plot.subtitle = element_markdown())
   
   si_save(glue("Images/{metadata$curr_pd}_SSD_OU_iit.png"),
-          scale = 1.5)  
+          scale = 0.8)  
   
   df_iit_rtt %>%
-    mutate(fiscal_year = str_sub(period, end = 4)) %>% 
+    mutate(fiscal_year = str_sub(period, end = 4),
+           share = tx_rtt/tx_curr,
+           share_label = percent(share)) %>% 
     filter(tx_curr_lag1 != 0) %>%
     ggplot(aes(period, tx_rtt, fill = as.character(period))) +
     geom_col(alpha = .75,
@@ -216,7 +294,7 @@
     
     labs(x = NULL, y = NULL, fill = NULL,
          title = glue("DESPITE A BRIEF INCREASE IN IIT IN Q3, <span style='color:{denim_light}'>TX_RTT</span> CONTINUED TO INCREASE OVER FY22"),
-         caption = glue("Source: {metadata$caption} | US Agency for International Development | {ref_id}")) +
+         caption = glue("{metadata$caption} | US Agency for International Development")) +
     si_style_ygrid() +
     theme(panel.spacing = unit(.5, "line"),
           legend.position = "none",
@@ -224,7 +302,7 @@
           strip.text = element_markdown())
   
   si_save(glue("Images/{metadata$curr_pd}_SSD_OU_rtt.png"),
-          scale = 1.5)  
+          scale = 0.8)  
   
   # ● IIT by age and sex at OU
   
@@ -262,14 +340,15 @@
   df_iit %>%
     filter(tx_curr_lag1 != 0,
            tx_curr != 0,
-           is.na(iit) == FALSE) %>%
+           is.na(iit) == FALSE, 
+           age_cat != "<01") %>%
     ggplot(aes(period, iit, group = sex, color = sex)) +
     geom_smooth(aes(weight = as.numeric(tx_curr_lag1),
                     group = sex, color = sex),
                 method = "loess",formula = "y ~ x", 
                 se = FALSE, na.rm = TRUE, linewidth = 1.5) +
     facet_wrap(~age_cat, ncol = 3, nrow = 3) +
-    scale_y_continuous(limits = c(0,.15),
+    scale_y_continuous(limits = c(0,.10),
                        label = percent_format(1),
                        oob = oob_squish) +
     coord_cartesian(clip = "off") +
@@ -279,7 +358,7 @@
           title = glue("The increase in Q3 IIT had disparate impacts by age group and sex") %>% toupper,
           subtitle = glue("<span style='color:{moody_blue_light}'>Females</span> in most age groups continue to experience increased IIT into Q4<br>
                            <span style='color:{genoa_light}'>Males</span> in all age groups experienced a decrease in IIT from Q3 to Q4"),
-          caption = glue("Note: IIT = TX_ML / TX_CURR - TX_NET_NEW + TX_NEW; ITT capped to 15%
+          caption = glue("Note: IIT = TX_ML / TX_CURR - TX_NET_NEW + TX_NEW; ITT capped to 10%
                          {metadata$caption} | US Agency for International Development")) +
     si_style_ygrid() +
     theme(panel.spacing = unit(.5, "line"),
@@ -289,7 +368,7 @@
   
   si_save(paste0(metadata$curr_pd, "_SSD_OU_age_sex_iit.png"),
           path = "Images",
-          scale = 1.5)
+          scale = 0.8)
   
   # ● IIT and return to care (TX_RTT) Trends Partner
   
@@ -363,7 +442,7 @@
           legend.position = "none")
   
   si_save(glue("Images/{metadata$curr_pd}_SSD_partner_iit.png"),
-          scale = 1.5)  
+          scale = 0.8)  
   
   # RTT by partner
   
@@ -404,7 +483,7 @@
      labs(x = NULL, y = NULL, fill = NULL,
           title = glue("All Partners saw an increase in TX_RTT by Q4") %>% toupper,
           subtitle = glue("CDC Partner Columbia Corporation also saw an increase in Q2 while USAID and DOD Partners did not"),
-          caption = glue("Source: {metadata$caption} | US Agency for International Development | {ref_id}")) +
+          caption = glue("{metadata$caption} | US Agency for International Development")) +
     si_style_ygrid() +
     theme(panel.spacing = unit(.5, "line"),
           legend.position = "none",
@@ -412,7 +491,7 @@
           strip.text = element_markdown())
 
    si_save(glue("Images/{metadata$curr_pd}_SSD_partner_rtt.png"),
-           scale = 1.5)  
+           scale = 0.8)  
  
   # ● OU FY22Q4 Target performance for KP and Priority Population --------------
    plot_name
@@ -439,14 +518,11 @@
      filter(funding_agency == "USAID", 
             indicator == "HTS_TST", 
             (standardizeddisaggregate == "KeyPop/Result" & ageasentered %in% peds) |
-              (standardizeddisaggregate == "Total Numerator"),
-           # fiscal_year == metadata$curr_fy
-            ) %>%
+              (standardizeddisaggregate == "Total Numerator"),) %>%
      mutate(type = ifelse(standardizeddisaggregate == "Total Numerator", "Total", "Peds")) %>% 
      group_by(country, fiscal_year, indicator, type) %>%
      summarise(across(c(targets, starts_with("qtr")), sum, na.rm = TRUE), .groups = "drop") %>%
      reshape_msd("quarters") %>% 
-     select(-results_cumulative) %>% 
      arrange(type, period)
    
    df_kp <- df_kp %>% 
@@ -457,7 +533,9 @@
      group_by(type) %>%
      fill(growth_rate_req, .direction = "updown") %>%
      mutate(
-       growth_rate = (results / lag(results, order_by = period)) - 1,
+       growth_rate = case_when(period %in% c("FY21Q2", "FY21Q3", "FY21Q4", 
+                                             "FY22Q2", "FY22Q3", "FY22Q4")
+         ~ (results_cumulative / lag(results_cumulative, order_by = period)) - 1),
        growth_rate = na_if(growth_rate, Inf)) %>%
      ungroup() %>%
      mutate(
@@ -466,12 +544,11 @@
          growth_rate_req < 0 ~ glue("{toupper(country)}\nTarget achieved"),
          growth_rate_req < .1 ~ glue("{toupper(country)}\n{percent(growth_rate_req, 1)}"),
          TRUE ~ glue("{toupper(country)}\n{percent(growth_rate_req, 1)}")),
-       gr_lab = case_when(fiscal_year == metadata$curr_fy ~ percent(growth_rate, 1)),
-       gr_label_position = 0,
+       gr_lab = glue("{percent(growth_rate, 1)}"),
+       gr_label_position = results_cumulative - 20000,
        disp_targets = case_when(fiscal_year == metadata$curr_fy ~ targets), 
        amount_diff = targets - results, 
        pct_change = round_half_up((results - targets)/abs(targets) * 100),0)
-   
    
    df_achv_kp <- df_kp %>% 
      filter(period == metadata$curr_pd) %>%
@@ -480,12 +557,13 @@
    
    df_kp %>%
      filter(type == "Total") %>%
-     ggplot(aes(period, results, fill = as.character(period))) +
+     ggplot(aes(period, results_cumulative, fill = as.character(period))) +
      geom_col(aes(y = targets), na.rm = TRUE, fill = suva_grey, alpha = .2) +
      geom_col(na.rm = TRUE) +
      geom_errorbar(aes(ymin = targets, ymax = targets), 
                    linetype = "dashed", width = .95, na.rm = TRUE) +
-     geom_text(aes(label = comma(results), y = gr_label_position),
+     geom_text(aes(label = case_when(!gr_lab == "NA" 
+                                     ~ gr_lab), y = gr_label_position),
                family = "Source Sans Pro", color = "white", size = 9 / .pt,
                vjust = -.5, na.rm = TRUE) +
      scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
@@ -505,7 +583,7 @@
    
    si_save(paste0(metadata$curr_pd, "_SSD_KP_HTS_TST_TRENDS.png"),
            path = "Images",
-           scale = 1.5)
+           scale = 0.8)
   
 # PSNUxIM ----------------------------------------------------------------------
    
@@ -538,8 +616,9 @@
      geom_col(alpha = .75,
               position = position_dodge(width = .5)) +
      geom_hline(yintercept = 0) +
-     facet_wrap(~ fct_reorder2(snu_label, period, value), scales = "free_y") +
-     scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
+     facet_wrap(~ fct_reorder2(snu_label, period, value), scales = "fixed") +
+     scale_y_continuous(limits = c(-10, 900),
+       label = label_number(scale_cut = cut_short_scale())) +
      scale_fill_manual(values = c("TX_NEW_Central Equatoria" = denim,
                                   "TX_NET_NEW_Central Equatoria" = denim_light,
                                   "TX_NEW_Western Equatoria" = burnt_sienna,
@@ -549,7 +628,7 @@
       labs(x = NULL, y = NULL, fill = NULL,
            title = glue("USAID'S TX_NET_NEW QUARTERLY TRAJECTORY VARIED BY STATE "),
            subtitle = glue("TX_NEW stayed relatively constant in Central Equatoria while it declined over the year in Western Equatoria"),
-           caption = glue("Source: {metadata$caption} | US Agency for International Development | {ref_id}")) +
+           caption = glue("{metadata$caption} | US Agency for International Development")) +
      si_style_ygrid() +
      theme(panel.spacing = unit(.5, "line"),
            legend.position = "none",
@@ -559,7 +638,6 @@
    si_save(glue("Images/{metadata$curr_pd}_SSD_State_tx-new-nn.png"),
            scale = 1.1)  
    
-  
   # TX-CURR Target Performance by SNU County/ military
   
   snu1df_curr <-  snu1df %>%
@@ -591,12 +669,12 @@
     ungroup() %>%
     mutate(
       geo_gr_lab = case_when(
-        is.infinite(growth_rate_req) ~ glue("{toupper(snu1)}"), # metadata$curr_qtr == 4 | is.infinite(growth_rate_req)
+        is.infinite(growth_rate_req) ~ glue("{toupper(snu1)}"),
         growth_rate_req < 0 ~ glue("{toupper(snu1)}\nTarget achieved"),
         growth_rate_req < .1 ~ glue("{toupper(snu1)}\n{percent(growth_rate_req, 1)}"),
         TRUE ~ glue("{toupper(snu1)}\n{percent(growth_rate_req, 1)}")),
       gr_lab = case_when(fiscal_year == metadata$curr_fy ~ percent(growth_rate, 1)),
-      gr_label_position = 0,
+      gr_label_position = results - 1500,
       disp_targets = case_when(fiscal_year == metadata$curr_fy ~ targets), 
       amount_diff = targets - results, 
       pct_change = round_half_up((results - targets)/abs(targets) * 100),0)
@@ -627,8 +705,9 @@
     geom_text(aes(label = comma(results), y = gr_label_position),
                family = "Source Sans Pro", color = "white", size = 9 / .pt,
                vjust = -.5, na.rm = TRUE) +
-    facet_wrap(~ fct_reorder2(snu_label, period, targets), scales = "free_y") +
-    scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
+    facet_wrap(~ fct_reorder2(snu_label, period, targets), scales = "fixed") +
+    scale_y_continuous(limits = c(0, 7500),
+      label = label_number(scale_cut = cut_short_scale())) +
     scale_x_discrete(breaks = unique(snu1df_curr$period)[grep("Q(4)", unique(snu1df_curr$period))]) +
     scale_fill_manual(values = c(genoa_light, denim_light, burnt_sienna_light)) +
     labs(
@@ -644,7 +723,7 @@
   
   si_save(paste0(metadata$curr_pd, "_SSD-_tx-curr-targets_snu.png"),
           path = "Images",
-          scale = 1.5)
+          scale = 0.8)
   
   # ● TX-NEW Target Performance by SNU County/ military (FY22 Q4 cumulative for TX_NEW)
 
@@ -677,7 +756,7 @@
     ungroup() %>%
     mutate(
       geo_gr_lab = case_when(
-        is.infinite(growth_rate_req) ~ glue("{toupper(snu1)}"), # metadata$curr_qtr == 4 | is.infinite(growth_rate_req)
+        is.infinite(growth_rate_req) ~ glue("{toupper(snu1)}"),
         growth_rate_req < 0 ~ glue("{toupper(snu1)}\nTarget achieved"),
         growth_rate_req < .1 ~ glue("{toupper(snu1)}\n{percent(growth_rate_req, 1)}"),
         TRUE ~ glue("{toupper(snu1)}\n{percent(growth_rate_req, 1)}")),
@@ -730,25 +809,72 @@
   
   si_save(paste0(metadata$curr_pd, "_SSD-_tx-new-targets_snu.png"),
           path = "Images",
-          scale = 1.5)
+          scale = 0.8)
   
 # SitexIM ----------------------------------------------------------------------
   
-  # ● Treatment Gain / Loss Trends (TX-NET-NEW and Gain/Loss) for sites 
-  # contributing to 80% of IIT
+  # ● Treatment Gain / Loss Trends (TX-NET-NEW and Gain/Loss) for largest sites 
+  # contributing to IIT
+  
+  df_iit_site <- site_df %>% 
+    filter(indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW"),
+           funding_agency == "USAID",
+           fiscal_year == "2022", 
+           sitename != "Data reported above Site level") %>%
+    pluck_totals() %>%
+    group_by(fiscal_year, psnu, sitename, indicator) %>% 
+    summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>% 
+    reshape_msd(include_type = FALSE) %>% 
+    pivot_wider(names_from = "indicator",
+                names_glue = "{tolower(indicator)}")
+  
+  df_iit_site <- df_iit_site %>%
+    mutate(tx_curr_lag1 = tx_curr - tx_net_new) %>% 
+    rowwise() %>% 
+    mutate(iit = tx_ml / sum(tx_curr_lag1, tx_new, na.rm = TRUE)) %>% 
+    ungroup()
+  
+  df_iit_site %>%
+    filter(period == "FY22Q4") %>%
+    mutate(site_label = stringr::str_replace_all(sitename, 
+                                                "Primary Health Care Centre", 
+                                                "PHCC"), 
+           large_iit = case_when(iit > 0.05 ~ TRUE), 
+           iit_label = percent(iit, accuracy = 1), 
+           tx_curr_label = comma(tx_curr)) %>%
+  drop_na(iit_label) %>%
+  ggplot(aes(x = tx_curr, y = iit_label, size = tx_curr)) +
+    geom_point(alpha = 0.7, aes(color = large_iit)) +
+    geom_text(aes(label = case_when(large_iit == TRUE ~ site_label)),
+              family = "Source Sans Pro", color = "black", size = 9 / .pt,
+              vjust = -.5, na.rm = TRUE) +
+    si_style_ygrid() +
+    
+    labs(
+      x = NULL, y = NULL,
+      title = glue("5 Largest Sites with the Highest Q4 IIT") %>% toupper(),
+      subtitle = "Size of points scaled by TX_CURR",
+      caption = glue("{metadata$caption} | US Agency for International Development")) +
+    si_style_ygrid() +
+    theme(
+      legend.position = "none",
+      panel.spacing = unit(.5, "picas"),
+      axis.text.x = element_text(size = 8))
+  
+  si_save(paste0(metadata$curr_pd, "_SSD_Sitelevel_IIT_TX_CURR.png"),
+          path = "Images",
+          scale = 0.8)
   
   df_nn_site <- site_df %>% 
     mutate(sitename = stringr::str_to_title(sitename)) %>%
     filter(funding_agency == "USAID", 
            indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW", "TX_RTT"), 
            fiscal_year == "2022",
-           # filtering to keep only highest IIT sites
-           sitename %in% c("Lutheran Church Primary Health Care Centre", 
-                           "Gurei Primary Health Care Centre",
-                           "Munuki Primary Health Care Centre",
-                           "Kator Primary Health Care Centre",
-                           "Aru Junction Primary Health Care Unit",
-                           "Nyakuron Primary Health Care Centre")) %>%
+            sitename %in% c("Gurei Primary Health Care Centre",
+                            "Munuki Primary Health Care Centre",
+                            "Kator Primary Health Care Centre",
+                            "Nyakuron Primary Health Care Centre", 
+                            "Juba Protection Of Civilians")) %>%
     pluck_totals() %>%
     group_by(sitename, indicator, fiscal_year) %>% 
     summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>% 
@@ -763,20 +889,23 @@
   
   df_nn_site %>%
     filter(tx_curr != 0) %>%
+    mutate(site_label = stringr::str_replace_all(sitename, 
+                                                 "Primary Health Care Centre", 
+                                                 "PHCC")) %>%
     ggplot(aes(period, value, fill = fct_rev(indicator))) +
     geom_col(alpha = .75,
              position = position_dodge(width = .5)) +
     geom_hline(yintercept = 0) +
-    facet_wrap(~fct_reorder2(sitename, period, tx_curr),
-               scales = "free_y") +
+    facet_wrap(~fct_reorder2(site_label, period, tx_curr),
+               scales = "fixed") +
     scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
     scale_fill_manual(values = c("TX_NEW" = scooter,
                                  "TX_NET_NEW" = scooter_light)) +
       labs(x = NULL, y = NULL, fill = NULL,
-           caption = glue("Source: {metadata$caption} | US Agency for International Development | {ref_id}")) +
+           caption = glue("{metadata$caption} | US Agency for International Development")) +
     #       title = glue("AMONG SITES WITH THE HIGHEST IIT, <span style='color:{scooter_light}'>TX_NET_NEW</span> AND <span style='color:{scooter}'>TX_NEW</span> NARROWING OVER FY22"),
     #       subtitle = glue("Substantial Drop in Q3 Likely Tempered Progress"),
-    #       caption = glue("Source: {metadata$caption} | US Agency for International Development | {ref_id}")) +
+    #       caption = glue("{metadata$caption} | US Agency for International Development | {ref_id}")) +
     si_style_ygrid() +
     theme(panel.spacing = unit(.5, "line"),
           legend.position = "none",
@@ -785,7 +914,7 @@
   
   si_save(paste0(metadata$curr_pd, "_SSD_tx-new-net-new_sites.png"),
           path = "Images",
-          scale = 1.5)
+          scale = 0.8)
   
   # ● IIT by age and sex for two facilities with highest IIT
   
@@ -821,11 +950,13 @@
     mutate(tx_curr_lag1 = tx_curr - tx_net_new) %>% 
     rowwise() %>% 
     mutate(iit = tx_ml / sum(tx_curr_lag1, tx_new, na.rm = TRUE)) %>% 
-    ungroup()
+    ungroup() %>%
+    filter(!age_cat == "<01")
   
   df_iit_site %>%
-    filter(sitename == "Munuki Primary Health Care Centre") %>%
-    filter(tx_curr_lag1 != 0,
+    filter(sitename == "Munuki Primary Health Care Centre",
+           
+           tx_curr_lag1 != 0,
            tx_curr != 0,
            is.na(iit) == FALSE) %>%
     ggplot(aes(period, iit, group = sex, color = sex)) +
@@ -854,7 +985,7 @@
   
   si_save(paste0(metadata$curr_pd, "_SSD_Munuki_age_sex_iit.png"),
           path = "Images",
-          scale = 1.5)
+          scale = 0.8)
   
   df_iit_site %>%
     filter(sitename == "Gurei Primary Health Care Centre") %>%
@@ -887,7 +1018,7 @@
   
   si_save(paste0(metadata$curr_pd, "_SSD_Gurei_age_sex_iit.png"),
           path = "Images",
-          scale = 1.5)
+          scale = 0.8)
 
   # ● IIT and return to care (TX_RTT) Trends 2 sites with highest IIT
   
@@ -944,7 +1075,7 @@
           legend.position = "none")
   
   si_save(glue("Images/{metadata$curr_pd}_SSD_Site_iit.png"),
-          scale = 1.5)  
+          scale = 0.8)  
   
   df_iit_rtt_site %>%
     mutate(fiscal_year = str_sub(period, end = 4)) %>% 
@@ -958,7 +1089,7 @@
     scale_fill_manual(values = c(moody_blue, golden_sand)) +
      labs(x = NULL, y = NULL, fill = NULL,
           title = glue("TX_RTT HAD RISEN AT GUREI PHCC WHILE IT FELL AT MUNUKI PHCC"),
-          caption = glue("Source: {metadata$caption} | US Agency for International Development | {ref_id}")) +
+          caption = glue("{metadata$caption} | US Agency for International Development")) +
     si_style_ygrid() +
     theme(panel.spacing = unit(.5, "line"),
           legend.position = "none",
@@ -966,7 +1097,7 @@
           strip.text = element_markdown())
   
   si_save(glue("Images/{metadata$curr_pd}_SSD_site_rtt.png"),
-          scale = 1.5)  
+          scale = 0.8)  
   
   # ● KP Target performance by Towns (Reach and Testing)
   # town?

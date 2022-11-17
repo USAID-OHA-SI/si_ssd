@@ -55,7 +55,7 @@ pd_prior <- (convert_qtr_to_date(metadata$curr_pd) - months(3)) %>%
 df_tx <- df %>%
   filter(
     indicator == "TX_CURR",
-    funding_agency == "USAID",
+    funding_agency %in% c("USAID", "DOD"),
    (standardizeddisaggregate == "Age/Sex/HIVStatus" & ageasentered %in% adults) |
       (standardizeddisaggregate == "Total Numerator")) %>%
   mutate(type = ifelse(standardizeddisaggregate == "Total Numerator",
@@ -106,7 +106,9 @@ df_tx %>%
   facet_wrap(~ fct_reorder2(geo_gr_lab, period, targets), scales = "free_y") +
   scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
   scale_x_discrete(breaks = unique(df_tx$period)[grep("Q(4)", unique(df_tx$period))]) +
-  scale_fill_manual(values = c(denim_light, burnt_sienna_light)) +
+  scale_fill_manual(values = c("Central Equatoria State" = denim_light,
+                                "Western Equatoria State" = burnt_sienna_light,
+                                "_Military South Sudan" = genoa_light)) +
   labs(
     x = NULL, y = NULL,
     title = glue("ONLY {df_achv[df_achv$type == 'Total',]$n} of USAID's regions reached their {metadata$curr_fy_lab} treatment targets") %>% toupper(),
@@ -126,7 +128,7 @@ si_save(paste0(metadata$curr_pd, "_SSD-_tx-curr-growth_regional.png"),
 
 df_iit <- df %>% 
   filter(indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW"),
-         funding_agency == "USAID",
+         funding_agency %in% c("USAID", "DOD"),
          fiscal_year == "2022") %>%
   pluck_totals() %>%
   group_by(fiscal_year, snu1, psnu, indicator) %>% 
@@ -140,13 +142,6 @@ df_iit <- df_iit %>%
   rowwise() %>% 
   mutate(iit = tx_ml / sum(tx_curr_lag1, tx_new, na.rm = TRUE)) %>% 
   ungroup()
-
-df_snu_lab <- df_iit %>% 
-  filter(period == metadata$curr_pd) %>% 
-  count(snu1, wt = tx_curr, sort = TRUE) %>% 
-  mutate(snu1_lab = ifelse(n == max(n), glue("{snu1} - {label_number(1, scale_cut = cut_short_scale())(n)} [TX_CURR {pd_prior}]"),
-                           glue("{snu1} - {label_number(1, scale_cut = cut_short_scale())(n)}"))) %>%
-  select(-n)
 
 snu_tx_order <- df_iit %>% 
   filter(period == metadata$curr_pd) %>% 
@@ -171,24 +166,30 @@ vct_itt_cntry <- df %>%
   percent()
 
 df_iit %>%
-  left_join(df_snu_lab, by = "snu1") %>% 
-  mutate(fiscal_year = str_sub(period, end = 4)) %>% 
+  mutate(
+    snu_label = case_when(
+      snu1 == "Western Equatoria State" ~ "Western Equatoria",
+      snu1 == "Central Equatoria State" ~ "Central Equatoria",
+      snu1 == "_Military South Sudan" ~ "Military"),
+    fiscal_year = str_sub(period, end = 4)) %>% 
   filter(tx_curr_lag1 != 0) %>%
   ggplot(aes(period, iit, size = tx_curr_lag1)) +
-  geom_point(aes(color = snu1), 
+  geom_point(aes(color = snu_label), 
              position = position_jitter(width = .2, seed = 42),
              na.rm = TRUE,
              alpha = .2) +
-  geom_smooth(aes(weight = tx_curr_lag1, group = snu1, color = snu1),
+  geom_smooth(aes(weight = tx_curr_lag1, group = snu_label, color = snu_label),
               method = "loess",
               formula = "y ~ x", se = FALSE, na.rm = TRUE,
               linewidth = 1.5) +
-  facet_wrap(~snu1) +
+  facet_wrap(~snu_label) +
   scale_size(label = comma, guide = NULL) +
   scale_y_continuous(limits = c(0,.25),
                      label = percent_format(1),
                      oob = oob_squish) +
-  scale_color_manual(values = c(denim, burnt_sienna)) +
+  scale_color_manual(values = c("Central Equatoria" = denim,
+                                "Western Equatoria" = burnt_sienna,
+                                "Military" = genoa)) +
   coord_cartesian(clip = "off") +
   labs(x = NULL, y = NULL,
        size = "Site TX_CURR (1 period prior)",
@@ -203,7 +204,7 @@ df_iit %>%
         legend.position = "none")
 
 si_save(glue("Images/{metadata$curr_pd}_SSD_region_iit.png"),
-        scale = 1.5)  
+        scale = .8)  
 
 # KP TX_CURR -------------------------------------------------------------------
 

@@ -13,7 +13,6 @@
     library(gagglr)
     library(extrafont)
     library(glue)
-    library(here)
 
 # Global Variables -------------------------------------------------------------
 
@@ -22,23 +21,15 @@
     # script used to produce it in our GitHub repository in the future
     ref_id <- "f5d11198"
 
-    # path to all MER data files
-    data <- here("Data/")
-
     # path to current OUxIM data file
-    file_path <- return_latest(folderpath = data,
-                               pattern = "Genie_OU_IM_South_Sudan_Daily_2022-11-09")
-
+    file_path <- si_path() %>% 
+      return_latest("Genie_OU_IM_South_Sudan_Daily")
+    
 # Data -------------------------------------------------------------------------
 
     # get the data
-    df_ssd <- read_msd(file_path) 
+    df_ssd <- read_msd(file_path)
     
-    # %>%
-    #   filter(indicator %in% c("HTS_TST", "HTS_TST_POS", 
-    #                           "TX_NEW", "TX_NET_NEW, 
-    #                           "))
-
     # get information about the data for the final graph
     get_metadata(file_path)
 
@@ -66,12 +57,12 @@
 
     # Un-comment and enter the name of the plot you selected in between " and the first _
     # ex: If you select plot 13, plot_file_name = glue("KP_Cascade_{metadata$curr_pd})
-    plot_file_name = glue("KP_Cascade_{metadata$curr_pd}")
+    plot_file_name = glue("SSD_Std_Cascade_{metadata$curr_pd}")
     # 13 = glue("KP_Cascade_{metadata$curr_pd}")
     # 1 =  glue("Standard_Cascade_{metadata$curr_pd}")
 
     # save the plot to the Images folder
-    si_save(here(glue("Images/{plot_file_name}_{ref_id}.png")),
+    si_save(glue("Images/{plot_file_name}_{ref_id}.png"),
             height = 9,
             width = 13)
     
