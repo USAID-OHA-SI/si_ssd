@@ -174,17 +174,13 @@ df_iit %>%
     fiscal_year = str_sub(period, end = 4)) %>% 
   filter(tx_curr_lag1 != 0) %>%
   ggplot(aes(period, iit, size = tx_curr_lag1)) +
-  geom_point(aes(color = snu_label), 
-             position = position_jitter(width = .2, seed = 42),
-             na.rm = TRUE,
-             alpha = .2) +
   geom_smooth(aes(weight = tx_curr_lag1, group = snu_label, color = snu_label),
               method = "loess",
               formula = "y ~ x", se = FALSE, na.rm = TRUE,
               linewidth = 1.5) +
   facet_wrap(~snu_label) +
   scale_size(label = comma, guide = NULL) +
-  scale_y_continuous(limits = c(0,.25),
+  scale_y_continuous(limits = c(0,.15),
                      label = percent_format(1),
                      oob = oob_squish) +
   scale_color_manual(values = c("Central Equatoria" = denim,
@@ -195,7 +191,7 @@ df_iit %>%
        size = "Site TX_CURR (1 period prior)",
        title = glue("Performance varied by State") %>% toupper, 
        subtitle = glue("Central Equatoria is trending downward while Western Equatoria trending upwards") %>% toupper,
-       caption = glue("Note: IIT = TX_ML / TX_CURR - TX_NET_NEW + TX_NEW; ITT capped to 25%
+       caption = glue("Note: IIT = TX_ML / TX_CURR - TX_NET_NEW + TX_NEW; ITT capped to 15%
                         {metadata$caption} | US Agency for International Development")) +
   si_style_ygrid() +
   theme(panel.spacing = unit(.5, "line"),

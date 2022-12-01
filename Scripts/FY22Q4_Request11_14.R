@@ -7,7 +7,7 @@
 # DATE:     2022-11-14
 # UPDATED:  2022-11-17
 
-# DEPENDENCIES ------------------------------------------------------------
+# DEPENDENCIES -----------------------------------------------------------------
   
   library(tidyverse)
   library(lubridate)
@@ -494,23 +494,26 @@
            scale = 0.8)  
  
   # ● OU FY22Q4 Target performance for KP and Priority Population --------------
-   plot_name
-   
-   # # Plot the cascade
-   # # You will be prompted to enter a cascade number
-   # return_cascade_plot(ou_df, export = F)
+   # plot_name
    # 
+   # usaid_df <- ou_df %>%
+   #   filter(funding_agency == "USAID")
+   # 
+   # # # Plot the cascade
+   # # # You will be prompted to enter a cascade number
+   # return_cascade_plot(ou_df, export = F)
+   # # 
    # # Un-comment and enter the name of the plot you selected in between " and the first _
    # # ex: If you select plot 13, plot_file_name = glue("KP_Cascade_{metadata$curr_pd})
-   # plot_file_name = glue("AGYW_Cascade_{metadata$curr_pd}")
-   # # 13 = glue("KP_Cascade_{metadata$curr_pd}")
-   # # 1 =  glue("Standard_Cascade_{metadata$curr_pd}")
+   #  plot_file_name = glue("AGYW_Cascade_{metadata$curr_pd}")
+   #  13 = glue("KP_Cascade_{metadata$curr_pd}")
+   #  1 =  glue("Standard_Cascade_{metadata$curr_pd}")
    # 
    # # save the plot to the Images folder
    # si_save(glue("Images/{plot_file_name}_{ref_id}.png"),
-   #         height = 9,
-   #         width = 13)
-   # 
+   #          height = 9,
+   #          width = 13)
+   #  
 
   # ● FSW and KP Clients HIV Testing quarterly Trend
    
@@ -1046,10 +1049,6 @@
     mutate(fiscal_year = str_sub(period, end = 4)) %>% 
     filter(tx_curr_lag1 != 0) %>%
     ggplot(aes(period, iit, size = tx_curr_lag1)) +
-    geom_point(aes(color = sitename), 
-               position = position_jitter(width = .2, seed = 42),
-               na.rm = TRUE,
-               alpha = .2) +
     geom_smooth(aes(weight = tx_curr_lag1, group = sitename, 
                     color = sitename),
                 method = "loess",
