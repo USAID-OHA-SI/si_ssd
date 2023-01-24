@@ -1,0 +1,328 @@
+# PROJECT:  si_ssd
+# AUTHOR:   J.Hoehner | USAID
+# PURPOSE:  practice with COP22 viz
+# REF ID:   5eedfd8a 
+# LICENSE:  MIT
+# DATE:     2023-01-24
+# Notes: adapted from 
+#         Treatment/6MMD: agitprop/29_treat_qtr_mmd-usaid.R
+#         VLC/VLS: catch-22/20211018_USAID_VLC-by-country.R
+
+# DEPENDENCIES ----------------------------------------------------------------
+  
+  library(tidyverse)
+  library(extrafont)
+  library(gagglr)
+  library(glue)
+  library(scales)
+  library(ggtext)
+
+# GLOBAL VARIABLES ------------------------------------------------------------
+  
+  ref_id <- "5eedfd8a"
+  
+  clean_number <- function(x, digits = 0){
+    dplyr::case_when(x >= 1e9 ~ glue("{round(x/1e9, digits)}B"),
+                     x >= 1e6 ~ glue("{round(x/1e6, digits)}M"),
+                     x >= 1e3 ~ glue("{round(x/1e3, digits)}K"),
+                     TRUE ~ glue("{x}"))
+  }
+  
+  clean_mechs <- function(.data) {
+    
+    # Check for valid column name
+    .data %>%
+      assertr::verify("mech_name" %in% names(.))
+
+    # clean column data
+    .data <- .data %>%
+      dplyr::mutate(mech_name = recode(mech_name, 
+            "International Center for AIDS Care and Treatment Programs, Columbia University" = "ICAP", 
+            "Advancing HIV/AIDS Epidemic Control (AHEC)" = "AHEC", 
+            "RTI Care and Treatment" = "RTI", 
+            "ICAP HQ" = "ICAP"))
+  }
+  
+  ou_path <- "OU_IM_South_Sudan"
+  psnu_path <- "PSNU_IM_South_Sudan"
+  authors <- "Jessica Hoehner"
+
+# IMPORT ----------------------------------------------------------------------
+  
+  ou_df <- si_path() %>%
+    return_latest(ou_path) %>%
+    read_msd()
+  
+  psnu_df <- si_path() %>%
+    return_latest(psnu_path) %>%
+    read_msd()
+  
+  df_nat <- si_path() %>% 
+    return_latest("NAT") %>% 
+    read_msd()
+  
+  get_metadata()
+
+# MUNGE -----------------------------------------------------------------------
+  
+  # Successes
+  
+  # Treatment --------------------------------
+  # How many patients on 6MMD across PEPFAR?
+  
+  df_mmd <- ou_df %>% 
+    filter(indicator == "TX_CURR",
+           fiscal_year >= 2021,
+           standardizeddisaggregate %in% 
+             c("Total Numerator", "Age/Sex/ARVDispense/HIVStatus")) %>% 
+    mutate(otherdisaggregate = case_when(is.na(otherdisaggregate) ~ "total",
+                               TRUE ~ str_remove(otherdisaggregate, 
+                                       "ARV Dispensing Quantity - "))) %>%
+    clean_mechs() %>%
+    clean_agency() %>%
+    # add in agency agg and reshape
+    group_by(fiscal_year, indicator, otherdisaggregate) %>% 
+    summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>% 
+    reshape_msd() %>% 
+    filter(value > 0) %>%
+    # create group for o3mo and o6mo via reshaping for plotting
+    select(-period_type) %>% 
+    pivot_wider(names_from = otherdisaggregate) %>% 
+    rowwise() %>% 
+    mutate(
+      #unknown = total - sum(`Less than 3 months`, `3 to 5 months`, `6 or more months`, na.rm = TRUE),
+      #unknown = ifelse(unknown < 0, 0, unknown),
+      o3mmd = sum(`3 to 5 months`, `6 or more months`, na.rm = TRUE)) %>%
+    ungroup() %>% 
+    rename(o6mmd = `6 or more months`) %>% 
+    select(-`Less than 3 months`, -`3 to 5 months`) %>% 
+    pivot_longer(-c(period, indicator, total), 
+                 names_to = "otherdisaggregate",
+                 values_to = "tx_mmd") %>% 
+    rename(tx_curr = total) %>%
+    group_by(period, otherdisaggregate) %>%
+    arrange(otherdisaggregate, period) %>% 
+    mutate(otherdisaggregate = recode(otherdisaggregate,
+                                      "o3mmd" = "MMD - 3 months or more",
+                                      "o6mmd" = "MMD - 6 months or more"),
+           share = tx_mmd / tx_curr, 
+           bar_color = ifelse(otherdisaggregate == "MMD - 6 months or more", scooter, scooter_light),
+           otherdisaggregate_md = glue("<span style='color:{bar_color}'>{otherdisaggregate}</span>"),
+           lab_max = case_when(period == max(period) ~ share),
+           lab_other = case_when(period != max(period) ~ share))
+  
+  
+  # PLHIV reached by PEPFAR in SSD on ART ---------------
+  
+  # PLHIV and unmet need for treatment
+  # country-wide
+  df_nat_ssd <- df_nat %>%
+    filter(operatingunit == "South Sudan",
+           fiscal_year %in% c(2021,2022), 
+           indicator %in% c("TX_CURR_SUBNAT", "PLHIV"),
+           standardizeddisaggregate == "Age/Sex/HIVStatus") %>%
+    group_by(fiscal_year, trendscoarse, indicator) %>%
+    summarise(across(targets, sum, na.rm = TRUE)) %>%
+    pivot_wider(names_from = indicator, values_from = targets) %>%
+    mutate(
+      fiscal_year = as.character(fiscal_year),
+      gap = TX_CURR_SUBNAT / PLHIV,
+      gap_pct = percent(gap),
+      need_label = comma(PLHIV - TX_CURR_SUBNAT),
+      PLHIV_label = comma(PLHIV),
+      TX_CURR_SUBNAT_label = comma(TX_CURR_SUBNAT)) %>%
+    drop_na(TX_CURR_SUBNAT)
+  
+  # SNU level
+   df_nat_snu <- df_nat %>%
+     filter(operatingunit == "South Sudan",
+            fiscal_year %in% c(2021,2022),  
+            indicator %in% c("TX_CURR_SUBNAT", "PLHIV"),
+            standardizeddisaggregate == "Age/Sex/HIVStatus") %>%
+     group_by(fiscal_year, snu1, trendscoarse, indicator) %>%
+     summarise(across(targets, sum, na.rm = TRUE)) %>%
+     pivot_wider(names_from = indicator, values_from = targets) %>%
+     mutate(
+       fiscal_year = as.character(fiscal_year),
+       gap = TX_CURR_SUBNAT / PLHIV,
+       gap_pct = percent(gap),
+       need_label = comma(PLHIV - TX_CURR_SUBNAT),
+       PLHIV_label = comma(PLHIV),
+       TX_CURR_SUBNAT_label = comma(TX_CURR_SUBNAT)) %>%
+     drop_na(TX_CURR_SUBNAT)
+  
+   
+  # OVC --------------------------------------
+  # how many people receive OVC services
+  # what percentage of OVC beneficiaries <18 know their status?
+  # what percentage of OVCLHIV are on ART?
+  
+  
+  # Challenges --------------------------------
+  
+  # What is the growth of TX_CURR since COP22?
+  # How has case-finding changed since COP22?
+  
+  # How has VL testing coverage/VLS (3rd 95) changed since COP22?
+  # - specific populations
+  # - infant (2 months) diagnosis (HTS_TST_POS?)
+   
+   df_vls <- psnu_df %>% 
+     filter(fiscal_year == "2022",
+            indicator %in% c("TX_CURR", "TX_PVLS", "TX_CURR_Lag2"),
+            standardizeddisaggregate %in% c("Total Numerator", "Total Denominator")) %>%
+     clean_indicator() %>% 
+     group_by(fiscal_year, snu1, indicator) %>% 
+     summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>%
+     reshape_msd() %>%
+     select(-period_type) %>%
+     pivot_wider(names_from = indicator,
+                 names_glue = "{tolower(indicator)}") %>% 
+     filter(tx_pvls_d > 0) %>% 
+     mutate(
+       fiscal_year = if_else(stringr::str_detect(period, "22"), 2022, 0)) %>%
+     group_by(fiscal_year, period, snu1) %>%
+      mutate(
+        vlc = tx_pvls_d/tx_curr_lag2,
+        vls = tx_pvls/tx_pvls_d,
+        snu1 = stringr::str_replace(snu1, "State", ""),
+            snu1 = recode(snu1, 
+                          "_Military South Sudan" = "Military"),
+            vlc_nat_avg = if_else(period == metadata$curr_pd, 
+                                  round(mean(df_vls$vlc), 2), 0.0), 
+            vls_nat_avg = if_else(period == metadata$curr_pd, 
+                                 round(mean(df_vls$vls), 2), 0.0),
+            vls_alt = tx_pvls/tx_curr_lag2,
+            vls_goal_gap = round(.9*tx_pvls_d, 0) - tx_pvls,
+            vls_goal_gap = ifelse(vls_goal_gap < 0, 0, vls_goal_gap),
+            fill_color = ifelse(vlc > 0.56, scooter, scooter_light), 
+            color_bar = ifelse(period == metadata$curr_pd, scooter, trolley_grey_light))
+   
+   #identify where 80% of TX_CURR is for viz facet
+   df_grps_adj <- df_vls_grp %>% 
+     count(snu1, mech_name, wt = tx_curr) %>% 
+     arrange(desc(n)) %>% 
+     mutate(cumsum = cumsum(n),
+            share = cumsum/sum(n))
+  
+  # Priority Strategies ------------------------
+  
+  # Index Testing achievement against targets since COP22
+  # TX_ML_IIT, RTT by partner
+  # VL testing achievement against targets, EID, TB
+
+  
+# VIZ --------------------------------------------------------------------------
+  
+  # PEPFAR-wide Trend in 6MMD ------------------------------
+  df_mmd %>% 
+    filter(otherdisaggregate == "MMD - 6 months or more") %>%
+    ggplot(aes(period, tx_mmd)) + 
+    geom_col(aes(y = tx_curr), fill = trolley_grey_light, alpha = .5) +
+    geom_col(aes(fill = bar_color)) +
+    # geom_text(aes(label = percent(lab_other, 1)), vjust = 1.2, na.rm = TRUE,
+    #           family = "Source Sans Pro SemiBold", color = "white") +
+    geom_text(aes(label = percent(lab_max, 1)), vjust = -2, na.rm  = TRUE,
+              family = "Source Sans Pro SemiBold", color = matterhorn) +
+    geom_text(aes(label = comma(tx_mmd)), na.rm  = TRUE,
+              y = 2000, family = "Source Sans Pro SemiBold", color = "white") +
+    geom_errorbar(aes(ymax = tx_curr, ymin = tx_curr), color = trolley_grey) +
+    # facet_wrap(~otherdisaggregate) +
+    facet_wrap(~otherdisaggregate_md, nrow = 1, ncol = 3) +
+    scale_x_discrete(breaks = c("FY20Q2", "FY20Q4", "FY21Q2", "FY21Q4", "FY22Q2", "FY22Q4")) +
+    scale_fill_identity() +
+    scale_y_continuous(labels = label_number(scale_cut = cut_si("unit")),
+                       position = "right", expand = c(.005, .005), 
+                       limits = c(0, 50000)) +
+    labs(x = NULL, y = NULL,
+         title = "South Sudan maintains strong 6 month multi-month dispensing (MMD) rates into COP23, more patients reached",
+         subtitle = "[Context on dips in FY22Q3]",
+         caption = glue("Source: {metadata$source}
+                         SI analytics: {paste(authors, collapse = '/')} | Ref ID: {ref_id}")) +
+    si_style_ygrid() +
+    theme(legend.position = "none", 
+          strip.text.x = element_markdown(family = "Source Sans Pro SemiBold", size = 13))
+
+  # How many PLHIV reached by PEPFAR in SSD are on ART and 
+  # how has the unmet need changed since 2021?
+  
+  # OVC --------------------------------------
+  # how many people receive OVC services?
+  # Ask OVC ISME
+  # how is achievement against targets?
+  # what percentage of OVC beneficiaries <18 know their status?
+  # what percentage of OVCLHIV are on ART?
+  
+
+  # Challenges
+  
+  # What is the growth of TX_CURR since COP22?
+   
+   
+  # How has case-finding changed since COP22?
+  
+  # How has VL testing coverage/VLS (3rd 95) 
+  #                    changed since COP22?
+  # - specific populations
+  # - infant (2 months) diagnosis (HTS_TST_POS?)
+   
+   df_vls %>% 
+     filter(period %in% c("FY22Q1", "FY22Q2", "FY22Q3", "FY22Q4")) %>%
+     ggplot(aes(vlc, fct_reorder(snu1, vlc, na.rm = TRUE))) +
+     geom_blank() +
+     annotate("rect", xmin = -Inf, xmax = .9, ymin = 0, ymax = Inf,
+              fill = trolley_grey_light, alpha = .4) +
+     geom_vline(xintercept = .9, linetype = "dashed") +
+     geom_point(aes(size = tx_curr, color = fill_color), alpha = .6,
+                position = position_jitter(width = 0, height = 0.1, seed = 42), na.rm = TRUE) +
+     geom_errorbar(aes(xmin = vlc_nat_avg, xmax = vlc_nat_avg, color = color_bar), 
+                   linewidth = 1.1) + 
+     scale_x_continuous(label = percent_format(1)) +
+     facet_grid(
+       #period ~ ., 
+                cols = vars(period),
+                scale = "free_y", space = "free") +
+     scale_size(labels = number_format(.1, scale = 1e-6, suffix = "M"),
+                range = c(2,10)) +
+     scale_color_identity() +
+     coord_cartesian(clip = "off") +
+     expand_limits(x = .75) +
+     # labs(y = NULL, x = "Viral Load Coverage Rate (TX_PVLS_D/TX_CURR)",
+     #      title = glue("Viral Load Coverage (VLC) rate improved over FY22 with 
+     #                    
+     #                   at {percent(df_usaid_adj$vlc, 1)} in {pd}, 
+     #      the agency has significant work to reach the goal of 90% VLC") %>% toupper() %>% str_wrap(),
+     #      size = glue("Current on Treatment (metadata$curr_pd)"),
+     #      caption = glue("Source: {metadata$source}, 
+     #                     Created by: USAID OHA SI Team")) +
+     si_style(facet_space = .5) +
+     theme(legend.position = "none",
+           axis.title = element_blank(),
+           axis.text = element_text(size = 9),
+           strip.text = element_text(size = 9),
+           axis.text.y = element_text(family = "Source Sans Pro"),
+           strip.text.y = element_text(family = "Source Sans Pro"))  
+  
+  # Priority Strategies:
+  
+  # Index Testing achievement against targets since COP22
+  
+  # TX_ML_IIT, RTT by partner
+  
+  # VL testing achievement against targets, EID, TB
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  

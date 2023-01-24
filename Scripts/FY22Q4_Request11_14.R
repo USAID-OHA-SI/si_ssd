@@ -502,9 +502,12 @@
    # # # Plot the cascade
    # # # You will be prompted to enter a cascade number
    # return_cascade_plot(ou_df, export = F)
-   # # 
-   # # Un-comment and enter the name of the plot you selected in between " and the first _
-   # # ex: If you select plot 13, plot_file_name = glue("KP_Cascade_{metadata$curr_pd})
+   # 
+   # curr_fy <-metadata$curr_fy
+   # curr_pd <- metadata$curr_pd
+   #
+   # Un-comment and enter the name of the plot you selected in between " and the first _
+   # ex: If you select plot 13, plot_file_name = glue("KP_Cascade_{metadata$curr_pd})
    #  plot_file_name = glue("AGYW_Cascade_{metadata$curr_pd}")
    #  13 = glue("KP_Cascade_{metadata$curr_pd}")
    #  1 =  glue("Standard_Cascade_{metadata$curr_pd}")
@@ -513,7 +516,7 @@
    # si_save(glue("Images/{plot_file_name}_{ref_id}.png"),
    #          height = 9,
    #          width = 13)
-   #  
+
 
   # ● FSW and KP Clients HIV Testing quarterly Trend
    
@@ -646,7 +649,7 @@
   snu1df_curr <-  snu1df %>%
     filter(
       fiscal_year == metadata$curr_fy,
-      !funding_agency %in% c("Dedup", "HHS/CDC"),
+      !funding_agency %in% c("HHS/CDC"),
       indicator == "TX_CURR",
       (standardizeddisaggregate == "Age/Sex/HIVStatus" & ageasentered %in% peds) |
         (standardizeddisaggregate == "Total Numerator")) %>%
@@ -733,7 +736,7 @@
   snu1_df_new <-  snu1df %>%
     filter(
       fiscal_year == metadata$curr_fy,
-      !funding_agency %in% c("Dedup", "HHS/CDC"),
+      !funding_agency %in% c("HHS/CDC"),
       indicator == "TX_NEW",
       (standardizeddisaggregate == "Age/Sex/HIVStatus" & ageasentered %in% peds) |
         (standardizeddisaggregate == "Total Numerator")) %>%
