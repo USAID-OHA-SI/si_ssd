@@ -16,6 +16,8 @@
   library(glue)
   library(scales)
   library(ggtext)
+  library(patchwork)
+  library(cascade)
 
 # GLOBAL VARIABLES ------------------------------------------------------------
   
@@ -43,8 +45,362 @@
             "ICAP HQ" = "ICAP"))
   }
   
+  # Summarizes patient gain/loss quarterly trend
+  
+  ou_patient_delta <- function(.path, .df, .ou, .fiscal_year, .type, .subtitle,
+                               .funding_agency = NULL, ...) {
+    # metadata
+    si_path() %>%
+      return_latest(.path) %>%
+      get_metadata()
+    
+    # add a unit test to check that tx_new and tx_net_new exist in .df
+    # add a unit test to check that path, df, ou, years, and agency(if not null)
+    # are not empty and exist in df
+    
+    
+    # filter for type, Total or Adults/Children
+    if (.type == "Total") {
+      .df <- .df %>%
+        filter(
+          indicator %in% c("TX_NEW", "TX_NET_NEW"),
+          operatingunit == .ou,
+          fiscal_year %in% .fiscal_year) %>%
+        pluck_totals()
+      
+    } else {
+      peds <- c("<01", "01-04", "05-09", "10-14")
+      adults <- c(
+        "15-19", "20-24", "25-29", "30-34", "35-39", "40-44", "45-49",
+        "50-54", "55-59", "60-64", "65+")
+      
+      .df <- .df %>%
+        filter(
+          operatingunit == .ou,
+          (standardizeddisaggregate == "Age/Sex/HIVStatus" & ageasentered %in% peds) |
+            (standardizeddisaggregate == "Total Numerator") |
+            (standardizeddisaggregate == "Age/Sex/HIVStatus" & ageasentered %in% adults)) %>%
+        mutate(type = case_when(
+          standardizeddisaggregate == "Total Numerator" ~ "Total",
+          standardizeddisaggregate == "Age/Sex/HIVStatus" &
+            ageasentered %in% adults ~ "Adults",
+          standardizeddisaggregate == "Age/Sex/HIVStatus" &
+            ageasentered %in% peds ~ "Pediatric")) %>%
+        filter(type == .type)
+    }
+    
+    # filter for funding agency
+    if (!is.null(.funding_agency)) {
+      df <- df %>%
+        filter(funding_agency == .funding_agency)
+    }
+    
+    df_iit <- .df %>%
+      clean_indicator() %>%
+      group_by(operatingunit, fiscal_year, indicator) %>%
+      summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>%
+      reshape_msd(include_type = FALSE) %>%
+      pivot_wider(
+        names_from = indicator,
+        names_glue = "{tolower(indicator)}") %>%
+      mutate(
+        fiscal_year = str_extract(period, "FY[0-2]{2}"),
+        patient_loss_gain = tx_net_new - tx_new) %>%
+      ungroup() %>%
+      pivot_longer(c(patient_loss_gain),
+                   names_to = "indicator") %>%
+      mutate(
+        delta_lab = if_else(indicator == "patient_loss_gain",
+                            comma(value), ""),
+        max = max(value, na.rm = TRUE) + round(value))
+    
+    df_iit %>%
+      ggplot(aes(x = period)) +
+      geom_blank(aes(y = max)) +
+      geom_col(aes(y = value, fill = fiscal_year), alpha = .7) +
+      # note, ncol can be changed usingthe function if > 2 fiscal years are used
+      facet_wrap(~fiscal_year, scales = "free_x", ncol = 1) +
+      geom_text(aes(label = delta_lab, y = value, color = fiscal_year),
+                position = position_dodge(width = 0.75),
+                family = "Source Sans Pro", size = 12 / .pt,
+                vjust = -.5, na.rm = TRUE) +
+      scale_color_manual(values = c(usaid_medblue, usaid_lightblue)) +
+      scale_fill_manual(values = c(usaid_lightblue, usaid_medblue)) +
+      scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
+      scale_x_discrete(breaks = unique(df_iit$period)[grep("Q(4)", unique(df_iit$period))]) +
+      si_style_ygrid() +
+      theme(
+        panel.spacing = unit(.5, "line"),
+        legend.position = "none",
+        plot.title = element_markdown(),
+        strip.text = element_markdown()) +
+      labs(
+        x = NULL, y = NULL, fill = NULL,
+        subtitle = glue("{.subtitle}"),
+        caption = glue(" Note: patient gain/loss = TX_NET_NEW - TX_NEW
+                             Adults = Ages 15 +, Children = Ages < 15
+                  {metadata$caption} | US Agency for International Development"))
+  }
+  
+  # Summarizes the quarterly trend in IIT, RTT, and unexplained gain/loss in patients
+  ou_iit_rtt_trend <- function(.path, .df, .ou, .fiscal_year,.type,
+                               .subtitle, .funding_agency = NULL, ...) {
+    # metadata
+    si_path() %>%
+      return_latest(.path) %>%
+      get_metadata()
+    
+    # add a unit test to check that required indicators exist in .df
+    
+    # filter for type, Total or Adults/Children
+    if (.type == "Total") {
+      
+      
+      .df <- .df %>%
+        filter(
+          indicator %in% c(
+            "TX_ML", "TX_ML_IIT", "TX_CURR",
+            "TX_NEW", "TX_NET_NEW", "TX_RTT"),
+          standardizeddisaggregate %in%
+            c("Age/Sex/ARTNoContactReason/HIVStatus", "Total Numerator"),
+          is.na(otherdisaggregate) |
+            str_detect(
+              otherdisaggregate,
+              "No Contact Outcome - Interruption in Treatment"),
+          !(standardizeddisaggregate == "Total Numerator" & indicator == "TX_ML"),
+          fiscal_year %in% .fiscal_year,
+          operatingunit == .ou) %>%
+        filter(
+          standardizeddisaggregate == "Total Numerator" |
+            (standardizeddisaggregate == "Age/Sex/ARTNoContactReason/HIVStatus" &
+               indicator == "TX_ML"))
+      
+      
+    } 
+    
+    else {
+      
+      peds <- c("<01", "01-04", "05-09", "10-14")
+      adults <- c(
+        "15-19", "20-24", "25-29", "30-34", "35-39", "40-44", "45-49",
+        "50-54", "55-59", "60-64", "65+")
+      
+      .df <- .df %>%
+        filter(
+          indicator %in% c(
+            "TX_ML", "TX_ML_IIT", "TX_CURR",
+            "TX_NEW", "TX_NET_NEW", "TX_RTT"),
+          standardizeddisaggregate %in%
+            c("Age/Sex/ARTNoContactReason/HIVStatus", "Total Numerator"),
+          is.na(otherdisaggregate) |
+            str_detect(otherdisaggregate,"No Contact Outcome - Interruption in Treatment"),
+          !(standardizeddisaggregate == "Total Numerator" &
+              indicator == "TX_ML"),
+          fiscal_year %in% .fiscal_year,
+          operatingunit == .ou) %>%
+        mutate(
+          type = case_when(
+            standardizeddisaggregate == "Total Numerator" ~ "Total",
+            standardizeddisaggregate == "Age/Sex/ARTNoContactReason/HIVStatus" &
+              ageasentered %in% adults ~ "Adults",
+            standardizeddisaggregate == "Age/Sex/ARTNoContactReason/HIVStatus" &
+              ageasentered %in% peds ~ "Pediatric")) %>%
+        filter(type %in% c("Total", glue("{.type}")))
+    }
+    
+    if (!is.null(.funding_agency)) {
+      .df <- .df %>%
+        filter(funding_agency == .funding_agency)
+      
+      # how can we dynamically title the agency specific graphs?
+    }
+    
+    df_iit <- .df %>%
+      clean_indicator() %>%
+      group_by(operatingunit, fiscal_year, indicator) %>%
+      mutate(
+        indicator = if_else(
+          indicator == "TX_ML", "TX_ML_IIT", indicator)) %>%
+      summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>%
+      reshape_msd(include_type = FALSE) %>%
+      pivot_wider(
+        names_from = indicator,
+        names_glue = "{tolower(indicator)}") %>%
+      rowwise() %>%
+      mutate(
+        tx_curr_lag1 = as.numeric(tx_curr - tx_net_new),
+        share_rtt_curr = as.numeric(tx_rtt / tx_curr),
+        share_rtt_label = percent(share_rtt_curr),
+        tx_curr_label = comma(round(tx_curr)),
+        iit_label = comma(tx_ml_iit),
+        fiscal_year = str_extract(period, "FY[0-2]{2}"),
+        period_num = str_extract(period, "Q[1-4]"),
+        period_num = as.numeric(str_extract(period_num, "[1-4]")),
+        delta_patients = -tx_ml_iit + as.numeric(tx_rtt),
+        tx_rtt_gain = (tx_curr_lag1 + tx_new + tx_rtt),
+        unexplained_loss_gain = (tx_rtt_gain - tx_ml_iit - tx_curr),
+        gain_loss_colors = if_else(unexplained_loss_gain > 0,
+                                   usaid_lightgrey, "#FFFFFF")) %>%
+      ungroup() %>%
+      pivot_longer(c(tx_ml_iit, unexplained_loss_gain, tx_rtt),
+                   names_to = "indicator") %>%
+      mutate(
+        unexplained_lab = if_else(indicator == "unexplained_loss_gain",
+                                  comma(value), ""),
+        value = if_else(indicator == "tx_ml_iit", -value, value),
+        value_filt = if_else(indicator == "unexplained_loss_gain",
+                             0, value))
+    
+    df_iit %>%
+      ggplot(aes(x = period, fill = fct_rev(indicator))) +
+      geom_col(aes(y = value_filt), alpha = .7) +
+      facet_wrap(~fiscal_year, scales = "free_x", ncol = 1) +
+      geom_text(aes(label = unexplained_lab, y = 0, color = gain_loss_colors),
+                position = position_dodge(width = 0.75),
+                family = "Source Sans Pro", size = 12 / .pt,
+                vjust = -.5, na.rm = TRUE) +
+      scale_color_manual(values = c("#FFFFFF", "#FFFFFF")) +
+      scale_fill_manual(values = c(
+        "tx_ml_iit" = usaid_lightblue,
+        "tx_rtt" = usaid_medblue,
+        "unexplained_loss_gain" = "#FFFFFF")) +
+      scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
+      scale_x_discrete(breaks = unique(df_iit$period)[grep("Q(4)", unique(df_iit$period))]) +
+      si_style_ygrid() +
+      theme(
+        panel.spacing = unit(.5, "line"),
+        # temporary since this is in grayscale
+        legend.position = "none",
+        plot.title = element_markdown(),
+        strip.text = element_markdown()) +
+      labs(
+        x = NULL, y = NULL, fill = NULL,
+        subtitle = glue("{.subtitle}"),
+        caption = glue(" Notes: 
+                        tx_ml_iit = TX_ML where patient experienced IIT;
+                        tx_rtt_gain = tx_curr_lag1 + tx_new + tx_rtt;
+                        unexplained_loss_gain =  tx_rtt_gain - tx_ml_iit  - tx_curr
+                   Number displayed is the unexplained loss or gain
+                   Adults = Ages 15 +, Children = Ages < 15
+                  {metadata$caption} | US Agency for International Development"))
+  }
+  
+  # Summarizes quarterly progress on selected indicators
+  ou_achv_qtr <- function(.path, .df, .indicator, .ou, .type, .subtitle,
+                          .funding_agency = NULL, ...) {
+    # metadata
+    si_path() %>%
+      return_latest(.path) %>%
+      get_metadata()
+    
+    peds <- c("<01", "01-04", "05-09", "10-14")
+    adults <- c(
+      "15-19", "20-24", "25-29", "30-34", "35-39", "40-44", "45-49",
+      "50-54", "55-59", "60-64", "65+")
+    
+    if (!is.null(.funding_agency)) {
+      .df <- .df %>%
+        filter(
+          funding_agency == .funding_agency
+        )
+    }
+    
+    df_new <- .df %>%
+      filter(
+        operatingunit == .ou,
+        indicator == .indicator,
+        (standardizeddisaggregate == "Age/Sex/HIVStatus" & ageasentered %in% peds) |
+          (standardizeddisaggregate == "Total Numerator") |
+          (standardizeddisaggregate == "Age/Sex/HIVStatus" & ageasentered %in% adults)) %>%
+      mutate(type = case_when(standardizeddisaggregate == "Total Numerator" ~ "Total", 
+                              standardizeddisaggregate == "Age/Sex/HIVStatus" & 
+                                ageasentered %in% adults ~ "Adults",
+                              standardizeddisaggregate == "Age/Sex/HIVStatus" & 
+                                ageasentered %in% peds ~ "Pediatric")) %>%
+      filter(type == .type) %>%
+      group_by(fiscal_year, operatingunit, indicator, type) %>%
+      summarise(across(c(targets, starts_with("qtr")), sum, na.rm = TRUE),
+                .groups = "drop"
+      ) %>%
+      reshape_msd("quarters") %>%
+      select(-results_cumulative) %>%
+      arrange(type, operatingunit, period)
+    
+    df_new <- df_new %>%
+      mutate(
+        growth_rate_req =
+          case_when(period == metadata$curr_pd ~
+                      ((targets / results)^(1 / (4 - metadata$curr_qtr))) - 1)
+      ) %>%
+      group_by(type) %>%
+      fill(growth_rate_req, .direction = "updown") %>%
+      mutate(
+        growth_rate = (results / lag(results, order_by = period)) - 1,
+        growth_rate = na_if(growth_rate, Inf)
+      ) %>%
+      ungroup() %>%
+      mutate(
+        geo_gr_lab = case_when(
+          is.infinite(growth_rate_req) ~ glue("{toupper(operatingunit)}"),
+          growth_rate_req < 0 ~ glue("{toupper(operatingunit)}\nTarget achieved"),
+          growth_rate_req < .1 ~ glue("{toupper(operatingunit)}\n{percent(growth_rate_req, 1)}"),
+          TRUE ~ glue("{toupper(operatingunit)}\n{percent(growth_rate_req, 1)}")
+        ),
+        gr_lab = case_when(fiscal_year == metadata$curr_fy ~
+                             glue("{percent(growth_rate, 1)}")),
+        gr_lab = stringr::str_replace(gr_lab, "NA", "0"),
+        gr_label_position = 0,
+        results_lab = case_when(fiscal_year == metadata$curr_fy ~
+                                  glue("{comma(results)}")),
+        disp_targets = case_when(fiscal_year == metadata$curr_fy ~ targets),
+        unit_label = glue("(Operating Unit)"),
+        amount_diff = targets - results,
+        pct_change = round_half_up((results - targets) / abs(targets) * 100), 0
+      )
+    
+    # percentage change from q1 to q4
+    pct_change_new <- df_new %>%
+      filter(type == .type) %>%
+      select(fiscal_year, pct_change) %>%
+      filter(pct_change == max(as.numeric(pct_change))) %>%
+      pull()
+    
+    df_new %>%
+      filter(type == .type) %>%
+      ggplot(aes(period, results, fill = as.character(period))) +
+      geom_col(na.rm = TRUE, alpha = .7, width = 1) +
+      geom_text(aes(label = results_lab, y = results),
+                family = "Source Sans Pro", color = usaid_darkgrey, size = 9 / .pt,
+                vjust = -.5, na.rm = TRUE
+      ) +
+      geom_text(aes(label = gr_lab, y = gr_label_position),
+                family = "Source Sans Pro", color = "white", size = 9 / .pt,
+                vjust = -.5, na.rm = TRUE
+      ) +
+      scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
+      scale_x_discrete(breaks = unique(df_new$period)[grep("Q(4)", unique(df_new$period))]) +
+      scale_fill_manual(values = c(
+        usaid_lightgrey, usaid_lightgrey, usaid_lightgrey, usaid_lightgrey,
+        usaid_lightgrey, usaid_lightgrey, usaid_lightgrey, usaid_lightgrey,
+        usaid_darkgrey, usaid_darkgrey, usaid_darkgrey, usaid_darkgrey
+      )) +
+      labs(
+        x = NULL, y = NULL,
+        title = NULL,
+        subtitle = glue("{.subtitle}"),
+        caption = glue("Note: Adults = Ages 15+ and Children= Ages <15
+                     {metadata$caption} | US Agency for International Development")
+      ) +
+      si_style_ygrid() +
+      theme(
+        legend.position = "none",
+        panel.spacing = unit(.5, "picas"),
+        axis.text.x = element_text(size = 8)
+      )
+  }
+  
   ou_path <- "OU_IM_South_Sudan"
-  psnu_path <- "PSNU_IM_South_Sudan"
+  psnu_path <- "PSNU_IM_South_Sudan_Frozen_2023-13-02"
   authors <- "Jessica Hoehner"
 
 # IMPORT ----------------------------------------------------------------------
@@ -61,7 +417,12 @@
     return_latest("NAT") %>% 
     read_msd()
   
-  get_metadata()
+  metadata_nat <- si_path() %>%
+    return_latest("NAT") %>%
+    get_metadata()
+  
+  
+    get_metadata()
 
 # MUNGE -----------------------------------------------------------------------
   
@@ -118,10 +479,10 @@
   # country-wide
   df_nat_ssd <- df_nat %>%
     filter(operatingunit == "South Sudan",
-           fiscal_year %in% c(2021,2022), 
+           fiscal_year %in% c(2023), 
            indicator %in% c("TX_CURR_SUBNAT", "PLHIV"),
            standardizeddisaggregate == "Age/Sex/HIVStatus") %>%
-    group_by(fiscal_year, trendscoarse, indicator) %>%
+    group_by(operatingunit, fiscal_year, trendscoarse, indicator) %>%
     summarise(across(targets, sum, na.rm = TRUE)) %>%
     pivot_wider(names_from = indicator, values_from = targets) %>%
     mutate(
@@ -136,7 +497,7 @@
   # SNU level
    df_nat_snu <- df_nat %>%
      filter(operatingunit == "South Sudan",
-            fiscal_year %in% c(2021,2022),  
+            fiscal_year %in% c(2023),  
             indicator %in% c("TX_CURR_SUBNAT", "PLHIV"),
             standardizeddisaggregate == "Age/Sex/HIVStatus") %>%
      group_by(fiscal_year, snu1, trendscoarse, indicator) %>%
@@ -158,6 +519,14 @@
   # what percentage of OVCLHIV are on ART?
   
   
+   
+  # KP 
+
+   
+   
+   
+   
+   
   # Challenges --------------------------------
   
   # What is the growth of TX_CURR since COP22?
@@ -235,10 +604,9 @@
                        position = "right", expand = c(.005, .005), 
                        limits = c(0, 50000)) +
     labs(x = NULL, y = NULL,
-         title = "South Sudan maintains strong 6 month multi-month dispensing (MMD) rates into COP23, more patients reached",
+         title = "Strong 6 month multi-month dispensing (MMD) rates into COP23, even more patients reached",
          subtitle = "[Context on dips in FY22Q3]",
-         caption = glue("Source: {metadata$source}
-                         SI analytics: {paste(authors, collapse = '/')} | Ref ID: {ref_id}")) +
+         caption = glue("Source: {metadata$source} | SI Analytics | Ref ID: {ref_id}")) +
     si_style_ygrid() +
     theme(legend.position = "none", 
           strip.text.x = element_markdown(family = "Source Sans Pro SemiBold", size = 13))
@@ -246,18 +614,26 @@
   # How many PLHIV reached by PEPFAR in SSD are on ART and 
   # how has the unmet need changed since 2021?
   
+  # PLHIV and unmet need for treatment
+ 
   # OVC --------------------------------------
-  # how many people receive OVC services?
+  # how many OVC receive services?
   # Ask OVC ISME
   # how is achievement against targets?
   # what percentage of OVC beneficiaries <18 know their status?
   # what percentage of OVCLHIV are on ART?
+   
+   # KP cascade
+   return_cascade_plot(psnu_df, 13)
+   
+   
+   si_save(glue("Images/{metadata$curr_pd}_SSD_AYPFemalcascade.png"),
+           scale = 1.3)  
   
 
   # Challenges
   
   # What is the growth of TX_CURR since COP22?
-   
    
   # How has case-finding changed since COP22?
   
@@ -307,9 +683,47 @@
   
   # Index Testing achievement against targets since COP22
   
-  # TX_ML_IIT, RTT by partner
+  # TX_ML_IIT, RTT
+   
+   ou_iit_rtt_trend(.path = ou_path, 
+                    .df = ou_df, 
+                    .fiscal_year = metadata$curr_fy, 
+                    .type = "Total", 
+                    .ou = "South Sudan", 
+                    .subtitle = glue::glue("South Sudan | {metadata$curr_pd}")
+                    )
+   
+   ou_iit_rtt_trend(.path = ou_path, 
+                    .df = ou_df, 
+                    .fiscal_year = metadata$curr_fy, 
+                    .type = "Adult", 
+                    .ou = "South Sudan", 
+                    .subtitle = glue::glue("South Sudan | {metadata$curr_pd}")
+   )
+   
+
+   ou_iit_rtt_trend(.path = ou_path, 
+                    .df = ou_df, 
+                    .fiscal_year = metadata$curr_fy, 
+                    .type = "Pediatric", 
+                    .ou = "South Sudan", 
+                    .subtitle = glue::glue("South Sudan | {metadata$curr_pd}")
+   )
+   
+     
+    ou_patient_delta(.path = ou_path, 
+                      .df = ou_df, 
+                      .fiscal_year = metadata$curr_fy, 
+                      .type = "Adults", 
+                      .ou = "South Sudan", 
+                      .subtitle = glue::glue("South Sudan | {metadata$curr_pd}")
+     )
+   
+   
   
   # VL testing achievement against targets, EID, TB
+   
+   
 
   
   
