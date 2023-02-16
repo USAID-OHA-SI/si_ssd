@@ -178,3 +178,72 @@ df_peds_ads %>%
        caption = glue("Source: {metadata$source}")) +
   si_style_ygrid(facet_space = .2) +
   theme(legend.position = "none")
+
+# ● FSW and KP Clients HIV Testing quarterly Trend
+
+df_kp <- ou_df %>% 
+  filter(operatingunit == "South Sudan",
+         indicator == "HTS_TST", 
+         (standardizeddisaggregate == "KeyPop/Result"),
+         fiscal_year %in% c(2021, 2022)) %>%
+  group_by(country, fiscal_year, indicator) %>%
+  summarise(across(c(targets, starts_with("qtr")), sum, na.rm = TRUE), .groups = "drop") %>%
+  reshape_msd("quarters") %>% 
+  arrange(period)
+
+df_kp <- df_kp %>% 
+  mutate(
+    growth_rate_req =
+      case_when(period == metadata$curr_pd ~
+                  ((targets / results)^(1 / (4 - metadata$curr_qtr))) - 1)) %>%
+  fill(growth_rate_req, .direction = "updown") %>%
+  mutate(
+    growth_rate = case_when(period %in% c("FY21Q2", "FY21Q3", "FY21Q4", 
+                                          "FY22Q2", "FY22Q3", "FY22Q4")
+                            ~ (results_cumulative / lag(results_cumulative, order_by = period)) - 1),
+    growth_rate = na_if(growth_rate, Inf)) %>%
+  ungroup() %>%
+  mutate(
+    geo_gr_lab = case_when(
+      is.infinite(growth_rate_req) ~ glue("{toupper(country)}"),
+      growth_rate_req < 0 ~ glue("{toupper(country)}\nTarget achieved"),
+      growth_rate_req < .1 ~ glue("{toupper(country)}\n{percent(growth_rate_req, 1)}"),
+      TRUE ~ glue("{toupper(country)}\n{percent(growth_rate_req, 1)}")),
+    gr_lab = glue("{percent(growth_rate, 1)}"),
+    disp_targets = case_when(fiscal_year == metadata$curr_fy ~ targets), 
+    amount_diff = targets - results, 
+    pct_change = round_half_up((results - targets)/abs(targets) * 100),0)
+
+df_achv_kp <- df_kp %>% 
+  filter(period == metadata$curr_pd) %>%
+  count(results >= targets) %>%
+  filter(`results >= targets` == TRUE)
+
+df_kp %>%
+  ggplot(aes(period, results_cumulative, fill = as.character(period))) +
+  geom_blank(aes(y = results_cumulative + 1000)) +
+  geom_col(aes(y = targets), na.rm = TRUE, fill = suva_grey, alpha = .2) +
+  geom_col(na.rm = TRUE) +
+  geom_errorbar(aes(ymin = targets, ymax = targets), 
+                linetype = "dashed", width = .95, na.rm = TRUE) +
+  geom_text(aes(label = case_when(!gr_lab == "NA" ~ gr_lab), y = results_cumulative-1000),
+            family = "Source Sans Pro", color = "white", size = 9 / .pt,
+            vjust = -.5, na.rm = TRUE) +
+  scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
+  scale_x_discrete(breaks = unique(df_kp$period)[grep("Q(4)", unique(df_kp$period))]) +
+  scale_fill_manual(values = c(moody_blue_light, moody_blue_light, moody_blue_light, moody_blue_light,
+                               moody_blue_light, moody_blue_light, moody_blue_light, moody_blue)) +
+  labs(
+    x = NULL, y = NULL,
+    title = glue("PEPFAR Performance in Testing Targets (HTS_TST) Among Key Populations (FSW) 
+                    Has Maintained Improvements in Achievement Made since FY21") %>% toupper(),
+    caption = glue("{metadata$caption} | US Agency for International Development")) +
+  si_style_ygrid() +
+  theme(
+    legend.position = "none",
+    panel.spacing = unit(.5, "picas"),
+    axis.text.x = element_text(size = 8))
+
+si_save(paste0(metadata$curr_pd, "_SSD_KP_HTS_TST_TRENDS.png"),
+        path = "Images",
+        scale = 0.8)

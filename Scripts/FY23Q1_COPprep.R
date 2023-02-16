@@ -399,6 +399,269 @@
       )
   }
   
+  # Adapted from hardapoart!
+  
+  #' @title Prep HIV Prevalence Source Data
+  #' 
+  #' @param cntry     OU/Country name
+  #' @param add_style Append color code
+  #' 
+  prep_hiv_prevalence <- function(df, cntry,
+                                  add_style = T) {
+    
+    #clean exit if no data
+    if(cntry %ni% unique(df$country))
+      return(NULL)
+    
+    ## SNU/Age/Sex Summaries
+    df_pops <- df %>% 
+      dplyr::filter(fiscal_year == max(fiscal_year),
+                    country == cntry) %>% 
+      dplyr::group_by(fiscal_year, operatingunit, country, snu1uid, snu1,
+                      indicator, ageasentered, sex) %>% 
+      dplyr::summarise(value = sum(targets, na.rm = T), .groups = "drop")
+    
+    #clean exit if no data
+    if(nrow(df_pops) == 0)
+      return(NULL)
+    
+    ## Add OU/Country Summary
+    
+    df_pops <- df_pops %>% 
+      group_by(fiscal_year, operatingunit, country, indicator, ageasentered, sex) %>% 
+      summarise(value = sum(value, na.rm = T), .groups = "drop") %>% 
+      mutate(snu1 = "COUNTRY") %>% 
+      bind_rows(df_pops, .)
+    
+    # SNU Only Summaries
+    df_pops_snu <- df_pops %>%
+      group_by(fiscal_year, operatingunit, country,
+               snu1uid, snu1, indicator) %>%
+      summarise(value = sum(value, na.rm = T), .groups = "drop")
+    
+    # Sex Only Summaries
+    df_pops_sex <- df_pops %>%
+      group_by(fiscal_year, operatingunit, country,
+               snu1uid, snu1, indicator, sex) %>%
+      summarise(value = sum(value, na.rm = T), .groups = "drop")
+    
+    ## Compute Prevalence
+    df_prev_sex <- df_pops_sex %>% 
+      group_by(fiscal_year, operatingunit, country, snu1uid, snu1, sex) %>% 
+      reframe(prevalence = value[indicator == "PLHIV"] / 
+                value[indicator == "POP_EST"]) %>% 
+      ungroup() 
+    
+    df_prev_snu <- df_pops_snu %>% 
+      group_by(fiscal_year, operatingunit, country, snu1uid, snu1) %>% 
+      reframe(snu_prev = sum(value[indicator == "PLHIV"], na.rm = T) / 
+                sum(value[indicator == "POP_EST"], na.rm = T)) %>% 
+      ungroup() 
+    
+    df_prev <- df_prev_sex %>% 
+      left_join(df_prev_snu,
+                by = c("fiscal_year","operatingunit", "country", 
+                       "snu1uid", "snu1"))
+    
+    ## Add SI Style for viz
+    if (add_style) {
+      
+      df_prev_gap <- df_prev %>% 
+        select(-snu_prev) %>% 
+        mutate(sex = tolower(sex)) %>% 
+        pivot_wider(names_from = sex,
+                    values_from = prevalence) %>% 
+        mutate(color_gap = grey30k)
+      
+      df_prev <- df_prev %>% 
+        left_join(df_prev_gap,
+                  by = c("fiscal_year","operatingunit", "country", 
+                         "snu1uid", "snu1")) %>% 
+        mutate(
+          color_sex = case_when(
+            sex == "Female" ~ moody_blue,
+            sex == "Male" ~ genoa,
+            TRUE ~ grey30k
+          ),
+          snu_label = case_when(
+            snu1 %in% c("COUNTRY", "OU") ~ paste0("<span style='color:", usaid_black, "'><strong>", snu1, "</strong></span>"),
+            TRUE ~ snu1
+          ),
+        ) %>% 
+        group_by(operatingunit) %>% 
+        mutate(
+          threshold = case_when(
+            snu_prev < prevalence[snu1 == "COUNTRY"] ~ .3,
+            TRUE ~ 1
+          )
+        ) %>% 
+        ungroup()
+    }
+    
+    return(df_prev)
+  }
+  
+  #' @title Visualize HIV Prevalence by SNU/Gender
+  #' 
+  #' 
+  #' 
+  viz_hiv_prevalence <- function(df, save = F) {
+    
+    if(is.null(df) || nrow(df) == 0)
+      return(print(paste("No data available.")))
+    
+    # OU/Country Reference line
+    
+    ref_id <- "8fb89847"
+    ref_snu <- "COUNTRY"
+    vrsn <- 1 
+
+    # Guides
+    gap_max <- df %>% 
+      filter(snu1 %ni% c("COUNTRY", "OU")) %>% 
+      pull(prevalence) %>%
+      max() %>%
+      round(2)
+    
+    gap_step <- .01
+    
+    # Control the number of vlines
+    if (gap_max > .10) {
+      gap_step <- .05
+    } else if (gap_max <= .02) {
+      gap_step <- .005
+    }
+    
+    # Display only a subset
+    df_viz <- df %>% 
+      dplyr::slice_max(order_by = snu_prev, n = 21 * 2) 
+    
+    if ("COUNTRY" %ni% df_viz$snu1) {
+      df_viz <- df %>% 
+        filter(snu1 == "COUNTRY") %>% 
+        bind_rows(df_viz, .)
+    }
+    
+    # Viz
+    viz <- df_viz %>% 
+      ggplot(aes(x = reorder(snu1, female), 
+                 y = prevalence,
+                 fill = color_sex)) +
+      geom_hline(yintercept = seq(from = 0, 
+                                  to = gap_max, 
+                                  by = gap_step),
+                 linewidth = .8, linetype = "dashed", color = grey20k) +
+      geom_vline(xintercept = ref_snu,
+                 linewidth = .8, linetype = "dashed", color = usaid_darkgrey) +
+      geom_segment(aes(xend = reorder(snu1, female),
+                       y = female, 
+                       yend = male,
+                       color = color_gap),
+                   linewidth = 2) +
+      geom_point(shape = 21, size = 5, color = grey10k) +
+      scale_fill_identity() +
+      scale_color_identity() +
+      scale_y_continuous(labels = percent, position = "right") +
+      coord_flip() +
+      labs(x = "", y = "", 
+           title = glue::glue("{toupper(unique(df$country))} - {unique(df$fiscal_year)} HIV PREVALANCE"),
+           subtitle = glue::glue("HIV Prevalence Gap between <span style='color:{genoa}'>Male</span> & <span style='color:{moody_blue}'>Female</span> by SNU"),
+           caption = glue::glue("{metadata_nat$caption} | USAID/OHA/SIEI |  Ref id: {ref_id} v{vrsn}")) +
+      si_style_nolines() +
+      theme(plot.subtitle = element_markdown(),
+            axis.text.y = element_markdown())
+    
+    print(viz)
+    
+    if (save) {
+      glitr::si_save(
+        plot = viz,
+        filename = glue::glue("./Graphics/{unique(df$fiscal_year)} - {toupper(unique(df$country))} HIV Prevalence.png"))
+    }
+  }
+  
+  
+  #' @title Prep TX VL Datasets
+  #' 
+  prep_viral_load <- function(df, cntry, pd_hist = 5) {
+    
+    #clean exit if no data
+    if(cntry %in% unique(df$country) 
+       #| 
+       #agency %ni% unique(df$funding_agency)
+       )
+      return(NULL)
+    
+    # Filter
+    df_tx <- df %>% 
+      filter(
+        #funding_agency == agency, 
+        country == cntry,
+        indicator %in% c("TX_CURR", "TX_PVLS", "TX_PVLS_D"),
+        standardizeddisaggregate %in% c("Age/Sex/HIVStatus", 
+                                        "Age/Sex/Indication/HIVStatus")) 
+    
+    if(nrow(df_tx) == 0)
+      return(NULL)
+    
+    # Summarise results by age - bands
+    df_tx <- df_tx %>%
+      select(-cumulative, -targets) %>% 
+      filter(ageasentered != "Unknown Age") %>% 
+      mutate(age = case_when(
+        trendscoarse == "<15" ~ trendscoarse,
+        ageasentered == "15-19" ~ ageasentered,
+        ageasentered %in% "20-24" ~ ageasentered,
+        TRUE ~ "25+")) %>% 
+      group_by(fiscal_year, 
+               #funding_agency, 
+               operatingunit, country, indicator, snu1, age) %>%
+      #summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>%
+      #summarise(across(where(is.numeric), sum, na.rm = TRUE), .groups = "drop") %>%
+      summarise(qtr1 = sum(qtr1, na.rm = TRUE), 
+                qtr2 = sum(qtr2, na.rm = TRUE),
+                qtr3 = sum(qtr3, na.rm = TRUE),
+                qtr4 = sum(qtr4, na.rm = TRUE),
+                .groups = "drop") 
+    
+    # Reshape long and calculate VLC/S
+    df_vl <- df_tx %>% 
+      reshape_msd() %>% 
+      select(-period_type) %>% 
+      pivot_wider(names_from = indicator, values_from = value) %>% 
+      rename_with(str_to_lower) %>% 
+      group_by(
+        #funding_agency, 
+               operatingunit, country, snu1, age) %>% 
+      mutate(
+        vlc = tx_pvls_d / dplyr::lag(tx_curr, 2, order_by = period),
+        vls = tx_pvls / tx_pvls_d) %>% 
+      ungroup()
+    
+    ## Limits history to last 5 quaters
+    
+    hist_pds <- df_vl %>% 
+      distinct(period) %>% 
+      arrange(desc(period)) %>% 
+      pull() 
+    
+    # reset pd hisory to 4 for anything outside of 2:8
+    if (pd_hist <= 1 | pd_hist > length(hist_pds)) {
+      usethis::ui_warn(glue::glue("History length ({pd_hist}) is behind 1 and {length(hist_pds)}. Value was reset to 4."))
+      pd_hist <- 4
+    }
+    
+    hist_pds <- hist_pds %>% 
+      magrittr::extract(1:pd_hist) %>% 
+      sort()
+    
+    df_vl %>% filter(period %in% hist_pds)
+  }
+  
+  
+  
+  
+  
   ou_path <- "OU_IM_South_Sudan"
   psnu_path <- "PSNU_IM_South_Sudan_Frozen_2023-13-02"
   authors <- "Jessica Hoehner"
@@ -409,24 +672,28 @@
     return_latest(ou_path) %>%
     read_msd()
   
+  get_metadata(type = "OU_IM")
+  metadata_msd_ou <- metadata
+  rm(metadata)
+  
   psnu_df <- si_path() %>%
     return_latest(psnu_path) %>%
     read_msd()
+  
+  
+  get_metadata(type = "PSNU_IM")
+  metadata_msd_psnu <- metadata
+  rm(metadata)
   
   df_nat <- si_path() %>% 
     return_latest("NAT") %>% 
     read_msd()
   
-  metadata_nat <- si_path() %>%
-    return_latest("NAT") %>%
-    get_metadata()
-  
-  
-    get_metadata()
+  get_metadata(type = "NAT_SUBNAT")
+  metadata_nat <- metadata
+  rm(metadata)
 
 # MUNGE -----------------------------------------------------------------------
-  
-  # Successes
   
   # Treatment --------------------------------
   # How many patients on 6MMD across PEPFAR?
@@ -527,12 +794,10 @@
    
    
    
-  # Challenges --------------------------------
+  # What is the growth of TX_CURR since COP22?----------
+  # How has case-finding changed since COP22?-----------
   
-  # What is the growth of TX_CURR since COP22?
-  # How has case-finding changed since COP22?
-  
-  # How has VL testing coverage/VLS (3rd 95) changed since COP22?
+  # How has VL testing coverage/VLS (3rd 95) changed since COP22?---------
   # - specific populations
   # - infant (2 months) diagnosis (HTS_TST_POS?)
    
@@ -574,13 +839,10 @@
      mutate(cumsum = cumsum(n),
             share = cumsum/sum(n))
   
-  # Priority Strategies ------------------------
-  
-  # Index Testing achievement against targets since COP22
-  # TX_ML_IIT, RTT by partner
-  # VL testing achievement against targets, EID, TB
+  # Index Testing achievement against targets since COP22 --------
+  # TX_ML_IIT, RTT --------------
+  # VL testing achievement against targets, EID, TB --------------
 
-  
 # VIZ --------------------------------------------------------------------------
   
   # PEPFAR-wide Trend in 6MMD ------------------------------
@@ -617,13 +879,11 @@
   # PLHIV and unmet need for treatment
  
   # OVC --------------------------------------
-  # how many OVC receive services?
-  # Ask OVC ISME
-  # how is achievement against targets?
+  # how many OVC receive services? -------
   # what percentage of OVC beneficiaries <18 know their status?
   # what percentage of OVCLHIV are on ART?
    
-   # KP cascade
+  # KP cascade -------------------------------
    return_cascade_plot(psnu_df, 13)
    
    
@@ -633,11 +893,9 @@
 
   # Challenges
   
-  # What is the growth of TX_CURR since COP22?
-   
-  # How has case-finding changed since COP22?
-  
-  # How has VL testing coverage/VLS (3rd 95) 
+  # What is the growth of TX_CURR since COP22? ------------
+  # How has case-finding changed since COP22?--------------
+  # How has VL testing coverage/VLS (3rd 95) ----------------
   #                    changed since COP22?
   # - specific populations
   # - infant (2 months) diagnosis (HTS_TST_POS?)
@@ -681,9 +939,8 @@
   
   # Priority Strategies:
   
-  # Index Testing achievement against targets since COP22
-  
-  # TX_ML_IIT, RTT
+  # Index Testing achievement against targets since COP22------------------
+  # TX_ML_IIT, RTT --------------------------------------
    
    ou_iit_rtt_trend(.path = ou_path, 
                     .df = ou_df, 
@@ -719,9 +976,19 @@
                       .subtitle = glue::glue("South Sudan | {metadata$curr_pd}")
      )
    
-   
-  
-  # VL testing achievement against targets, EID, TB
+  # VL testing achievement against targets, EID, TB--------------
+    
+  # HIV Prevalence by SNU - adapted from hardapoart
+    
+    df_nat %>% 
+      prep_hiv_prevalence("South Sudan") %>% 
+      viz_hiv_prevalence()
+    
+    # VLC/VLS combined by region and age group
+    
+ psnu_df %>%
+      prep_viral_load("South Sudan")
+    
    
    
 

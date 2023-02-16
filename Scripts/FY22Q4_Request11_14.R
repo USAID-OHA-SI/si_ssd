@@ -30,7 +30,7 @@
   
   # metadata
   ou_path <- si_path() %>% 
-    return_latest("Genie_OU_IM_South_Sudan_Daily")
+    return_latest("OU_IM_South_Sudan")
   
   get_metadata(ou_path)
 
@@ -44,7 +44,7 @@
   
   # OU
   ou_df <- si_path() %>% 
-    return_latest("Genie_OU_IM_South_Sudan_Daily") %>%
+    return_latest("OU_IM_FY20-23") %>%
     read_msd()
   
   # PSNU 
@@ -100,8 +100,8 @@
   
   ou_df_curr <-  ou_df %>%
     filter(
+      operatingunit = "South Sudan",
       fiscal_year == metadata$curr_fy,
-      funding_agency == "USAID",
       indicator == "TX_CURR",
       (standardizeddisaggregate == "Age/Sex/HIVStatus" & ageasentered %in% peds) |
         (standardizeddisaggregate == "Total Numerator")) %>%
@@ -149,7 +149,7 @@
   ou_df_curr %>%
     filter(type == "Total") %>%
     ggplot(aes(period, results, fill = as.character(period))) +
-    geom_col(aes(y = disp_targets), na.rm = TRUE, fill = suva_grey, alpha = .2) +
+    geom_col(aes(y = targets), na.rm = TRUE, fill = suva_grey, alpha = .2) +
     geom_col(na.rm = TRUE) +
     geom_errorbar(aes(ymin = targets, ymax = targets), 
                   linetype = "dashed", width = .95, na.rm = TRUE) +
@@ -179,7 +179,8 @@
   df_nn <- ou_df %>% 
     filter(indicator %in% c("TX_CURR", "TX_NEW", "TX_NET_NEW"),
            fiscal_year == "2022", 
-           funding_agency == "USAID") %>%
+           funding_agency == "USAID",
+           operatingunit = "South Sudan") %>%
     pluck_totals() %>% 
     group_by(country, indicator, fiscal_year) %>% 
     summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>% 
@@ -219,7 +220,8 @@
   df_iit_rtt <- ou_df %>% 
     filter(funding_agency == "USAID", 
            indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW", "TX_RTT"), 
-           fiscal_year == "2022") %>%
+           fiscal_year == metadata$curr_fy,
+           operatingunit = "South Sudan") %>%
     pluck_totals() %>%
     group_by(fiscal_year, country, indicator) %>% 
     summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>% 
@@ -238,7 +240,8 @@
   vct_itt_cntry <- ou_df %>% 
     filter(funding_agency == "USAID", 
            indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW", "TX_RTT"), 
-           fiscal_year == "2022") %>%
+           fiscal_year == metadata$curr_fy,
+           operatingunit = "South Sudan") %>%
     pluck_totals() %>%
     group_by(fiscal_year, country, indicator) %>% 
     summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>% 
@@ -448,7 +451,8 @@
   
   df_iit_rtt_partner <- ou_df %>%
     filter(indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW", "TX_RTT"),
-           fiscal_year == "2022") %>%
+           fiscal_year == metadata$curr_fy,
+           operatingunit =) %>%
     pluck_totals() %>%
     group_by(fiscal_year, prime_partner_name, indicator) %>%
     summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>%
@@ -521,22 +525,20 @@
   # ● FSW and KP Clients HIV Testing quarterly Trend
    
    df_kp <- ou_df %>% 
-     filter(funding_agency == "USAID", 
+     filter(operatingunit == "South Sudan",
             indicator == "HTS_TST", 
-            (standardizeddisaggregate == "KeyPop/Result" & ageasentered %in% peds) |
-              (standardizeddisaggregate == "Total Numerator"),) %>%
-     mutate(type = ifelse(standardizeddisaggregate == "Total Numerator", "Total", "Peds")) %>% 
-     group_by(country, fiscal_year, indicator, type) %>%
+            (standardizeddisaggregate == "KeyPop/Result"),
+            fiscal_year %in% c(2021, 2022)) %>%
+     group_by(country, fiscal_year, indicator) %>%
      summarise(across(c(targets, starts_with("qtr")), sum, na.rm = TRUE), .groups = "drop") %>%
      reshape_msd("quarters") %>% 
-     arrange(type, period)
+     arrange(period)
    
    df_kp <- df_kp %>% 
      mutate(
        growth_rate_req =
          case_when(period == metadata$curr_pd ~
                      ((targets / results)^(1 / (4 - metadata$curr_qtr))) - 1)) %>%
-     group_by(type) %>%
      fill(growth_rate_req, .direction = "updown") %>%
      mutate(
        growth_rate = case_when(period %in% c("FY21Q2", "FY21Q3", "FY21Q4", 
@@ -551,25 +553,23 @@
          growth_rate_req < .1 ~ glue("{toupper(country)}\n{percent(growth_rate_req, 1)}"),
          TRUE ~ glue("{toupper(country)}\n{percent(growth_rate_req, 1)}")),
        gr_lab = glue("{percent(growth_rate, 1)}"),
-       gr_label_position = results_cumulative - 20000,
        disp_targets = case_when(fiscal_year == metadata$curr_fy ~ targets), 
        amount_diff = targets - results, 
        pct_change = round_half_up((results - targets)/abs(targets) * 100),0)
    
    df_achv_kp <- df_kp %>% 
      filter(period == metadata$curr_pd) %>%
-     count(type, results >= targets) %>%
+     count(results >= targets) %>%
      filter(`results >= targets` == TRUE)
    
    df_kp %>%
-     filter(type == "Total") %>%
      ggplot(aes(period, results_cumulative, fill = as.character(period))) +
+     geom_blank(aes(y = results_cumulative + 1000)) +
      geom_col(aes(y = targets), na.rm = TRUE, fill = suva_grey, alpha = .2) +
      geom_col(na.rm = TRUE) +
      geom_errorbar(aes(ymin = targets, ymax = targets), 
                    linetype = "dashed", width = .95, na.rm = TRUE) +
-     geom_text(aes(label = case_when(!gr_lab == "NA" 
-                                     ~ gr_lab), y = gr_label_position),
+     geom_text(aes(label = case_when(!gr_lab == "NA" ~ gr_lab), y = results_cumulative-1000),
                family = "Source Sans Pro", color = "white", size = 9 / .pt,
                vjust = -.5, na.rm = TRUE) +
      scale_y_continuous(label = label_number(scale_cut = cut_short_scale())) +
@@ -578,7 +578,7 @@
                                   moody_blue_light, moody_blue_light, moody_blue_light, moody_blue)) +
      labs(
        x = NULL, y = NULL,
-       title = glue("USAID Performance in Testing Targets (HTS_TST) Among Key Populations (FSW) 
+       title = glue("PEPFAR Performance in Testing Targets (HTS_TST) Among Key Populations (FSW) 
                     Has Maintained Improvements in Achievement Made since FY21") %>% toupper(),
        caption = glue("{metadata$caption} | US Agency for International Development")) +
      si_style_ygrid() +

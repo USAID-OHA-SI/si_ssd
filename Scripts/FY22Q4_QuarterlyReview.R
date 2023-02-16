@@ -33,7 +33,7 @@ adults <- c("15-19", "20-24", "25-29", "30-34", "35-39", "40-44", "45-49",
 
 # IMPORT -----------------------------------------------------------------------
 
-df <- read_msd(path_genie)
+df <- read_psd(path_genie)
 
 # PERIODS ----------------------------------------------------------------------
 
@@ -173,11 +173,11 @@ df_iit %>%
       snu1 == "_Military South Sudan" ~ "Military"),
     fiscal_year = str_sub(period, end = 4)) %>% 
   filter(tx_curr_lag1 != 0) %>%
-  ggplot(aes(period, iit, size = tx_curr_lag1)) +
-  geom_smooth(aes(weight = tx_curr_lag1, group = snu_label, color = snu_label),
-              method = "loess",
-              formula = "y ~ x", se = FALSE, na.rm = TRUE,
-              linewidth = 1.5) +
+  ggplot(aes(period, iit, size = tx_curr_lag1, 
+             group = snu1, fill = snu1, 
+             color = snu1)) +
+  geom_area(aes(period, iit), alpha = .2, size = 1, na.rm = TRUE) +
+  geom_point(shape = 21, stroke = 1.5, na.rm = TRUE) +
   facet_wrap(~snu_label) +
   scale_size(label = comma, guide = NULL) +
   scale_y_continuous(limits = c(0,.15),
@@ -206,7 +206,6 @@ si_save(glue("Images/{metadata$curr_pd}_SSD_region_iit.png"),
 
 df_tx_kp <- df %>%
   filter(
-    funding_agency == "USAID",
     indicator == "TX_CURR",
     (standardizeddisaggregate == "KeyPop/HIVStatus") |
       (standardizeddisaggregate == "Total Numerator")) %>%
@@ -238,7 +237,9 @@ df_tx_kp <- df_tx_kp %>%
       TRUE ~ glue("{toupper(snu1)}\n{percent(growth_rate_req, 1)}")),
     gr_lab = case_when(fiscal_year == metadata$curr_fy ~ percent(growth_rate, 1)),
     gr_label_position = 0,
-    disp_targets = case_when(fiscal_year == metadata$curr_fy ~ targets))
+    disp_targets = case_when(fiscal_year == metadata$curr_fy ~ targets), 
+    geo_gr_lab = str_remove_all(geo_gr_lab, "STATE"), 
+    geo_gr_lab = str_replace(geo_gr_lab, "_MILITARY", "MILITARY"))
 
 df_achv_kp <- df_tx_kp %>%
   filter(period == metadata$curr_pd) %>%
@@ -260,7 +261,7 @@ df_tx_kp %>%
   scale_fill_manual(values = c(scooter_light, scooter)) +
   labs(
     x = NULL, y = NULL,
-    title = glue("ONLY {df_achv[df_achv$type == 'Total',]$n} of USAID's regions reached their {metadata$curr_fy_lab} treatment targets among FSWs") %>% toupper(),
+   # title = glue("{df_achv[df_achv$type == 'Total',]$n} region reached {metadata$curr_fy_lab} treatment targets among FSWs") %>% toupper(),
     subtitle = "Current FSWs on treatment by state and quarterly growth rate",
     caption = glue("{metadata$caption} | US Agency for International Development")) +
   si_style_ygrid() +
@@ -320,7 +321,7 @@ df_achv %>%
   coord_cartesian(clip = "off") +
   labs(x = glue("{metadata$curr_fy} Targets (log scale)"), y = "Target Achievement",
        fill = "Target Achievement", size = glue("{metadata$curr_fy_lab} Targets"),
-       title = glue("{df_underachv$Total} Counties failed to reach the 90% of their {metadata$curr_fy_lab} treatment targets") %>% toupper(),
+       title = glue("{df_underachv$Total} Counties Western Equatoria failed to reach 90% of their {metadata$curr_fy_lab} treatment targets") %>% toupper(),
        subtitle = "Counties under the achivement threshold are labeled",
        caption = glue("Note: Achievement capped at 110% 
                         {metadata$caption} | US Agency for International Development")) +
