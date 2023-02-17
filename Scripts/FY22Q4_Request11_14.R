@@ -55,7 +55,7 @@
   # Site
   site_df <- si_path() %>% 
     return_latest("Genie_SITE_IM_South_Sudan_Daily") %>%
-    read_msd()
+    read_psd()
   
   # time period data comes from OUxIM but should be the same for all levels
   full_pds <- (min(ou_df$fiscal_year) - 1) %>% 
@@ -824,7 +824,6 @@
   
   df_iit_site <- site_df %>% 
     filter(indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW"),
-           funding_agency == "USAID",
            fiscal_year == "2022", 
            sitename != "Data reported above Site level") %>%
     pluck_totals() %>%
@@ -873,10 +872,9 @@
   
   df_nn_site <- site_df %>% 
     mutate(sitename = stringr::str_to_title(sitename)) %>%
-    filter(funding_agency == "USAID", 
-           indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW", "TX_RTT"), 
+    filter(indicator %in% c("TX_ML", "TX_CURR", "TX_NEW", "TX_NET_NEW", "TX_RTT"), 
            fiscal_year == "2022",
-            sitename %in% c("Gurei Primary Health Care Centre",
+           sitename %in% c("Gurei Primary Health Care Centre",
                             "Munuki Primary Health Care Centre",
                             "Kator Primary Health Care Centre",
                             "Nyakuron Primary Health Care Centre", 
