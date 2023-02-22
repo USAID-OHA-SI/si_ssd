@@ -662,6 +662,324 @@ prep_viral_load <- function(df, cntry, pd_hist = 5) {
   df_vl %>% filter(period %in% hist_pds)
 }
 
+# Adapted from hardapoart!
 
+prep_txcoverage_age_sex <- function(df_nat, cntry) {
   
+  #clean exit if no data
+  if(cntry %ni% unique(df$cntry))
+    return(NULL)
+  
+  ind_sel <- c("PLHIV", "DIAGNOSED_SUBNAT" ,"TX_CURR_SUBNAT", "VL_SUPPRESSION_SUBNAT")
+  
+  df_gap <- df %>% 
+    dplyr::filter(country %in% cntry,
+                  fiscal_year == max(fiscal_year),
+                  indicator %in% ind_sel,
+                  standardizeddisaggregate == "Age/Sex/HIVStatus") 
+  
+  if(nrow(df_gap) == 0)
+    return(NULL)
+  
+  df_gap <- df_gap %>% 
+    dplyr::count(country, indicator, ageasentered, sex, wt = targets, name = "value") %>% 
+    tidyr::pivot_wider(names_from = indicator,
+                       names_glue = "{tolower(indicator)}") 
+  
+  if("plhiv" %ni% names(df_gap))
+    return(NULL)
+  
+  df_gap <- df_gap %>% 
+    dplyr::mutate(cov_status = diagnosed_subnat/plhiv,
+                  cov_tx = tx_curr_subnat/plhiv)
+  
+  df_viz <- df_gap %>% 
+    dplyr::mutate(plhiv_marker = dplyr::case_when(tx_curr_subnat > plhiv ~ plhiv),
+                  fill_color = ifelse(sex == "Male", glitr::genoa, glitr::moody_blue)) %>% 
+    dplyr::group_by(country) %>% 
+    dplyr::mutate(ctry_name = glue::glue("{unique(df_gap$country)}<br>{label_number(accuracy = .1, scale_cut = cut_short_scale())(sum(tx_curr_subnat, na.rm = TRUE))}/{label_number(accuracy = .1, scale_cut = cut_short_scale())(sum(plhiv, na.rm = TRUE))}"),
+                  lab_gap = scales::percent(cov_tx, 1)) %>% 
+    dplyr::ungroup() %>% 
+    dplyr::rename(cntry = country)
+  
+  return(df_viz)
+  
+} 
 
+prep_txnetnew_age_sex <- function(df_psnu, cntry) {
+  
+  #clean exit if no data
+  if(cntry %ni% unique(df_psnu$country))
+    return(NULL)
+  
+  clean_number <- function(x, digits = 0){
+    dplyr::case_when(x >= 1e9 ~ glue("{round(x/1e9, digits)}B"),
+                     x >= 1e6 ~ glue("{round(x/1e6, digits)}M"),
+                     x >= 1e3 ~ glue("{round(x/1e3, digits)}K"),
+                     TRUE ~ glue("{x}"))
+  }
+  
+  df <- df_psnu %>% 
+    dplyr::filter(country %in% cntry,
+                 fiscal_year == max(fiscal_year),
+                  indicator == "TX_NET_NEW",
+                  standardizeddisaggregate == "Age/Sex/HIVStatus") %>% 
+    dplyr::group_by(country, fiscal_year, indicator, age_2019, sex) %>% 
+    dplyr::summarise(across(starts_with("qtr"), \(x) sum(x, na.rm = TRUE)),
+                     .groups = "drop") %>%
+    gophr::reshape_msd() 
+  
+  df_viz <- df %>% 
+    dplyr::mutate(ctry_name = glue::glue("{unique(df$country)}<br>")) %>%
+    dplyr::mutate(fill_color = ifelse(sex == "Male", glitr::genoa_light, glitr::moody_blue_light)) %>% 
+    dplyr::rename(cntry = country) %>% 
+    dplyr::group_by(cntry, period, indicator, age_2019, sex) %>% 
+    dplyr::mutate(val_lab = glue::glue("{clean_number(value)}")) %>% 
+    dplyr::ungroup()
+  
+  
+  return(df_viz)
+  
+  
+}
+
+# Adapted from hardapoart
+# vlc/s gaps between different population groups by PSNU
+prep_viral_load_kp_agyw <- function(df, cntry){
+  
+  young <- c("10-14","15-19", "20-24") #DREAMS AGYW age band based on DREAMS guidance
+  
+  #filter to select indicators + country
+  df_vl <- df %>%  
+    clean_indicator() %>%
+    filter(indicator %in% c("TX_CURR", "TX_PVLS", "TX_PVLS_D"),
+           country == cntry)
+  
+  #clean exit for missing data
+  if(nrow(df_vl) == 0)
+    return(NULL)
+  
+  #create overall value
+  df_vl <- df_vl %>% 
+    bind_rows(df_vl %>% 
+                mutate(psnu = "OVERALL"))
+  
+  #clean define groups - AGYW, Non-AGYW
+  df_vl <- df_vl %>% 
+    mutate(type = case_when(sex=="Female" & ageasentered %in% young ~ "AGYW",
+                            str_detect(standardizeddisaggregate, "Total|KeyPop", negate = TRUE) ~ "Non-AGYW",
+                            TRUE ~ str_extract(standardizeddisaggregate, "Total|KeyPop")))
+  
+  #aggregate & reshape long
+  df_vl <- df_vl %>% 
+    group_by(fiscal_year, country, psnu, indicator, type) %>% 
+    summarise(across(starts_with("qtr"), \(x) sum(x, na.rm = TRUE)),
+              .groups = "drop") %>% 
+    reshape_msd(include_type = FALSE)
+  
+  #pivot wide in order to subtract KP from GP (Total)
+  df_vl <- df_vl %>% 
+    pivot_wider(names_from = type,
+                values_fill = 0) 
+  
+  #create KeyPop if missing
+  if("KeyPop" %ni% names(df_vl))
+    df_vl <- mutate(df_vl, KeyPop = 0)
+  
+  #subtract KP from GP (Total)
+  df_vl <- df_vl %>%
+    mutate(GenPop = Total - KeyPop,
+           GenPop = ifelse(GenPop < 0, 0, GenPop)) %>% 
+    select(-Total) %>% 
+    pivot_longer(-where(is.character),
+                 names_to = "type") %>% 
+    mutate(group = case_when(type %in% c("KeyPop", "GenPop") ~ "KP-GP",
+                             type %in% c("AGYW", "Non-AGYW") ~ "AGYW"),
+           .before = type)
+  
+  #reshape wider by indicator and create lag for VLC
+  df_vl <- df_vl %>% 
+    pivot_wider(names_from = indicator,
+                names_glue = "{tolower(indicator)}") %>% 
+    group_by(country, psnu, group, type) %>% 
+    mutate(tx_curr_lag2 = lag(tx_curr, n = 2, order_by = period)) %>% 
+    ungroup()
+  
+  #calculate VLC/S
+  df_vl <- df_vl %>%
+    mutate(vlc = tx_pvls_d/tx_curr_lag2,
+           vls = tx_pvls/tx_pvls_d) %>% 
+    filter(!is.nan(vlc))
+  
+  #limit to latest period
+  df_vl <- filter(df_vl, period == max(period))
+  
+  #color
+  df_viz <- df_vl %>% 
+    select(-c(tx_pvls, tx_pvls_d, tx_curr_lag2)) %>% 
+    mutate(fill_color = case_when(type == "KeyPop" ~ scooter,
+                                  type == "AGYW" ~ genoa,
+                                  TRUE ~ grey30k)) %>% 
+    pivot_longer(c(vls, vlc), 
+                 names_to = "indicator") %>% 
+    mutate(group_viz = ifelse(group == "AGYW",
+                              glue("**<span style='color:{genoa}'>AGYW</span> vs <span style='color:{grey30k}'>non-AGYW</span> {toupper(indicator)}**"),
+                              glue("**<span style='color:{scooter}'>KeyPop</span> vs <span style='color:{grey30k}'>GenPop</span> {toupper(indicator)}**")))
+  
+  return(df_viz)
+}
+
+# VIZ ---------------------------------------------------------------------
+
+# Adapted from hardapoart
+# tx_curr by age ands sex and txnetnew by age and sex
+viz_txcoverage_age_sex <- function(df) {
+  
+  if(is.null(df) || nrow(df) == 0)
+    return(print(paste("No data available.")))
+  
+  ref_id <- "fe2dcee4"
+  
+  df %>% 
+    ggplot2::ggplot(aes(plhiv, ageasentered, fill = fill_color, color = fill_color)) +
+    ggplot2::geom_blank(aes(plhiv*1.1)) +
+    ggplot2::geom_col(fill = NA, width = .8, alpha = .8) +
+    ggplot2::geom_col(aes(tx_curr_subnat), width = .8, alpha = .8) +
+    ggplot2::geom_errorbar(aes(xmin = plhiv_marker, xmax = plhiv_marker), 
+                           na.rm = TRUE, color = "white", linetype = "dotted") +
+    ggplot2::geom_text(aes(label = lab_gap), na.rm = TRUE,
+                       family = "Source Sans Pro", color = glitr::suva_grey,
+                       size = 10/.pt, hjust = -.5) +
+    ggplot2::facet_grid(sex ~ forcats::fct_reorder(ctry_name, plhiv, sum, na.rm = TRUE, .desc = TRUE),
+                        switch = "y", scales = "free_x"
+    ) +
+    ggplot2::scale_x_continuous(label = scales::label_number(scale_cut = cut_short_scale()),
+                                expand = c(.005, .005)) +
+    ggplot2::scale_fill_identity(aesthetics = c("fill", "color")) +
+    ggplot2::labs(x = NULL, y = NULL,
+                  title = glue::glue("{metadata_natsubnat$curr_fy_lab} {unique(df$cntry)} Treatment coverage gaps") %>% toupper,
+                  subtitle = "TX_CURR_SUBNAT coverage of PLHIV by age and sex",
+                  caption = " ") +
+    ggplot2::coord_cartesian(clip = "off") +
+    glitr::si_style_xgrid() +
+    ggplot2::theme(strip.text.y = element_text(hjust = .5),
+                   strip.text.x = element_markdown(),
+                   strip.placement = "outside",
+                   panel.spacing.x = unit(1, "lines"),
+                   panel.spacing.y = unit(.5, "lines")
+    )
+  
+}
+
+viz_txnetnew_age_sex <- function(df) {
+  
+  if(is.null(df) || nrow(df) == 0)
+    return(print(paste("No data available.")))
+  
+  ref_id <- "fe2dcee4"
+  vrsn <- 1 
+  
+  df %>% 
+    dplyr::filter(age_2019 != "Unknown Age",
+                  period == metadata_msd_psnu$curr_pd) %>% 
+    ggplot2::ggplot(aes(value, age_2019, fill = fill_color, color = fill_color)) +
+    ggplot2::geom_col(aes(fill = fill_color), width = .8, alpha = .8) +
+    #facet_wrap(~sex, switch = "y", scales = "free_x") +
+    ggplot2::facet_grid(sex ~ forcats::fct_reorder(ctry_name, value, sum, na.rm = TRUE, .desc = TRUE),
+                        switch = "y", scales = "free_x"
+    ) +
+    ggplot2:: geom_text(aes(label = val_lab), na.rm = TRUE,
+                        family = "Source Sans Pro", color = suva_grey,
+                        size = 10/.pt, hjust = -.5) +
+    ggplot2::scale_fill_identity(aesthetics = c("fill", "color")) +
+    ggplot2::scale_x_continuous(label = scales::label_number(scale_cut = cut_short_scale()),
+                                expand = c(.005, .005)) +
+    glitr::si_style_xgrid() +
+    ggplot2::labs(x = NULL, y = NULL,
+                  title = glue::glue("{metadata_msd_psnu$curr_pd} {unique(df$cntry)} quarterly net change in ART patients") %>% toupper,
+                  subtitle = "TX_NET_NEW by age and sex",
+                  caption = glue::glue("{metadata_msd_psnu$caption} | USAID/OHA/SIEI |  Ref Id: {ref_id} v{vrsn}")) +
+    ggplot2::coord_cartesian(clip = "off") +
+    ggplot2::theme(
+      strip.text.y = element_blank(), #element_text(hjust = .5),
+      strip.text.x = element_markdown(),
+      strip.placement = "outside",
+      panel.spacing.x = unit(1, "lines"),
+      panel.spacing.y = unit(.5, "lines"),
+      axis.text.y = element_blank())
+}
+
+viz_tx_all <- function(cntry) {
+  
+  v1 <- prep_txcoverage_age_sex(df_nat, cntry) %>% 
+    viz_txcoverage_age_sex()
+  
+  v2 <- prep_txnew_age_sex(df_psnu, cntry) %>% 
+    viz_txnew_age_sex()
+  
+  if(is.null(v1) && is.null(v2)){
+    viz_tx <- NULL
+    print(paste("No data available."))
+  } else if(is.null(v2)){
+    viz_tx <- v1
+  } else if(is.null(v1)){
+    viz_tx <- v2
+  } else {
+    suppressWarnings(
+      viz_tx <- cowplot::plot_grid(v1, v2, ncol = 2, align = 'v')
+    )
+  }
+  
+  return(viz_tx)
+  
+  
+}
+
+#(v1 + v2) + plot_layout(widths = c(2, 1), heights = c(10))
+
+# Adapted from hardapoart
+# Viz TX VLC/S Gaps by PSNU
+
+viz_viral_load_kp_agyw <- function(df){
+  
+  if(is.null(df) || nrow(df) == 0)
+    return(print(paste("No data available.")))
+  
+  ref_id <- "02dc818a" #id for adorning to plots, making it easier to find on GH
+  
+  vrsn <- 1 
+  
+  cap_note <- ifelse(nrow(df) > 21, "| Limited to the largest 20 TX_CURR PSNUs\n", "")
+  
+  #limit to 21 bars (overall + 20 psnus)
+  v_top <- df %>% 
+    filter(group == "AGYW") %>% 
+    count(psnu, wt = tx_curr, sort = TRUE) %>% 
+    slice_head(n = 21) %>% 
+    pull(psnu)
+  
+  df <- filter(df, psnu %in% v_top) 
+  
+  #viz
+  df %>% 
+    ggplot(aes(value, fct_reorder(psnu, tx_curr, max, na.rm = TRUE), color = fill_color, group = psnu)) +
+    geom_vline(xintercept = 0, color = "#D3D3D3") +
+    geom_vline(xintercept = 1, color = "#D3D3D3", linetype = "dashed") +
+    geom_line(color = "#d3d3d3", na.rm = TRUE) +
+    geom_point(size = 2, color = "white", na.rm = TRUE) +
+    geom_point(size = 2, alpha = .6, na.rm = TRUE) +
+    scale_color_identity() +
+    facet_wrap(~group_viz, nrow = 1) +
+    scale_x_continuous(labels = scales::percent, name = NULL, 
+                       limits = c(0,1.1), 
+                       breaks = seq(0,1.1, by = .25),
+                       oob = oob_squish) + 
+    labs(x = NULL, y = NULL,
+         subtitle = glue("{unique(df$period)} {unique(df$country)} VLC/S gaps between different population groups"),
+         caption = glue("Note: VL capped at 110% {cap_note}{metadata_msd_psnu$caption} | USAID/OHA/SIEI | Ref id: {ref_id} v{vrsn}")) +
+    si_style_xline() +
+    theme(legend.position = "none",
+          strip.text = element_markdown(),
+          panel.spacing = unit(.5, "picas"))
+  
+}

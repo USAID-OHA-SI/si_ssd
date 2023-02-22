@@ -16,7 +16,7 @@
   
   ref_id <- "5eedfd8a"
   ou_path <- "OU_IM_South_Sudan"
-  psnu_path <- "PSNU_IM_South_Sudan_Frozen_2023-13-02"
+  psnu_path <- "Genie_PSNU_IM_South_Sudan"
   authors <- "Jessica Hoehner"
 
 # IMPORT ----------------------------------------------------------------------
@@ -42,7 +42,7 @@
     read_psd()
   
   get_metadata(type = "NAT_SUBNAT")
-  metadata_nat <- metadata
+  metadata_natsubnat <- metadata
   rm(metadata)
 
 # MUNGE -----------------------------------------------------------------------
@@ -181,10 +181,23 @@
      arrange(desc(n)) %>% 
      mutate(cumsum = cumsum(n),
             share = cumsum/sum(n))
-  
-  # Index Testing achievement against targets since COP22 --------
-  # TX_ML_IIT, RTT --------------
-  # VL testing achievement against targets, EID, TB --------------
+   
+   # Treatment Coverage Gaps and Treatment Initiations
+   
+   # needs MSD and country 
+   df_nat_curr <- prep_txcoverage_age_sex(df_nat, "South Sudan")
+   
+   # needs MSD, country
+   df_msd_netnew <- prep_txnetnew_age_sex(psnu_df, "South Sudan")
+   
+   # Adapted from hardapoart
+   # needs MSD and country 
+   # vlc/s gaps between different population groups by PSNU
+   df_msd_kp_agyw <- prep_viral_load_kp_agyw(psnu_df, "South Sudan")
+   
+   # requested to keep only AGYW/non-AGYW
+   df_msd_AGYW <- df_msd_kp_agyw %>%
+     filter(group == "AGYW")
 
 # VIZ --------------------------------------------------------------------------
   
@@ -221,134 +234,22 @@
   
   # PLHIV and unmet need for treatment
  
-  # OVC --------------------------------------
-  # how many OVC receive services? -------
-  # what percentage of OVC beneficiaries <18 know their status?
-  # what percentage of OVCLHIV are on ART?
-   
   # KP cascade -------------------------------
 
    cascade::return_cascade_plot(psnu_df)
    
    return_cascade(psnu_df, 1)
    
-   
    si_save(glue("Images/{metadata$curr_pd}_SSD_GP_cascade.png"),
            scale = 1.3)  
 
-  # Challenges
-  
-  # What is the growth of TX_CURR since COP22? ------------
-  # How has case-finding changed since COP22?--------------
-  # How has VL testing coverage/VLS (3rd 95) ----------------
-  #                    changed since COP22?
-  # - specific populations
-  # - infant (2 months) diagnosis (HTS_TST_POS?)
-   
-   df_vls %>% 
-     filter(period %in% c("FY22Q1", "FY22Q2", "FY22Q3", "FY22Q4")) %>%
-     ggplot(aes(vlc, fct_reorder(snu1, vlc, na.rm = TRUE))) +
-     geom_blank() +
-     annotate("rect", xmin = -Inf, xmax = .9, ymin = 0, ymax = Inf,
-              fill = trolley_grey_light, alpha = .4) +
-     geom_vline(xintercept = .9, linetype = "dashed") +
-     geom_point(aes(size = tx_curr, color = fill_color), alpha = .6,
-                position = position_jitter(width = 0, height = 0.1, seed = 42), na.rm = TRUE) +
-     geom_errorbar(aes(xmin = vlc_nat_avg, xmax = vlc_nat_avg, color = color_bar), 
-                   linewidth = 1.1) + 
-     scale_x_continuous(label = percent_format(1)) +
-     facet_grid(
-       #period ~ ., 
-                cols = vars(period),
-                scale = "free_y", space = "free") +
-     scale_size(labels = number_format(.1, scale = 1e-6, suffix = "M"),
-                range = c(2,10)) +
-     scale_color_identity() +
-     coord_cartesian(clip = "off") +
-     expand_limits(x = .75) +
-     # labs(y = NULL, x = "Viral Load Coverage Rate (TX_PVLS_D/TX_CURR)",
-     #      title = glue("Viral Load Coverage (VLC) rate improved over FY22 with 
-     #                    
-     #                   at {percent(df_usaid_adj$vlc, 1)} in {pd}, 
-     #      the agency has significant work to reach the goal of 90% VLC") %>% toupper() %>% str_wrap(),
-     #      size = glue("Current on Treatment (metadata$curr_pd)"),
-     #      caption = glue("Source: {metadata$source}, 
-     #                     Created by: USAID OHA SI Team")) +
-     si_style(facet_space = .5) +
-     theme(legend.position = "none",
-           axis.title = element_blank(),
-           axis.text = element_text(size = 9),
-           strip.text = element_text(size = 9),
-           axis.text.y = element_text(family = "Source Sans Pro"),
-           strip.text.y = element_text(family = "Source Sans Pro"))  
-  
-  # Priority Strategies:
-  
-  # Index Testing achievement against targets since COP22------------------
-  # TX_ML_IIT, RTT --------------------------------------
-   
-   ou_iit_rtt_trend(.path = ou_path, 
-                    .df = ou_df, 
-                    .fiscal_year = metadata$curr_fy, 
-                    .type = "Total", 
-                    .ou = "South Sudan", 
-                    .subtitle = glue::glue("South Sudan | {metadata$curr_pd}")
-                    )
-   
-   ou_iit_rtt_trend(.path = ou_path, 
-                    .df = ou_df, 
-                    .fiscal_year = metadata$curr_fy, 
-                    .type = "Adult", 
-                    .ou = "South Sudan", 
-                    .subtitle = glue::glue("South Sudan | {metadata$curr_pd}")
-   )
-   
+  # VL coverage/VLS (3rd 95)
 
-   ou_iit_rtt_trend(.path = ou_path, 
-                    .df = ou_df, 
-                    .fiscal_year = metadata$curr_fy, 
-                    .type = "Pediatric", 
-                    .ou = "South Sudan", 
-                    .subtitle = glue::glue("South Sudan | {metadata$curr_pd}")
-   )
+   # Adapted from hardapoart
+   # Viz TX VLC/S Gaps by PSNU
+   # needs df from  prep_viral_load_kp_agyw
+   viz_viral_load_kp_agyw(df_msd_AGYW)
    
-     
-    ou_patient_delta(.path = ou_path, 
-                      .df = ou_df, 
-                      .fiscal_year = metadata$curr_fy, 
-                      .type = "Adults", 
-                      .ou = "South Sudan", 
-                      .subtitle = glue::glue("South Sudan | {metadata$curr_pd}")
-     )
-   
-  # VL testing achievement against targets, EID, TB--------------
-    
-  # HIV Prevalence by SNU - adapted from hardapoart
-    
-    df_nat %>% 
-      prep_hiv_prevalence("South Sudan") %>% 
-      viz_hiv_prevalence()
-    
-    # VLC/VLS combined by region and age group
-    
- psnu_df %>%
-      prep_viral_load("South Sudan")
-    
-   
-   
-
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
+   si_save(glue("Images/SSD_VLC_VLS_gaps_AGYW-nonAGYW.png"),
+           scale = 1.3) 
+ 
