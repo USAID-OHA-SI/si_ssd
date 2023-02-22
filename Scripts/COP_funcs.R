@@ -16,6 +16,7 @@
   library(ggtext)
   library(patchwork)
   library(cascade)
+  library(ggrepel)
 
 # FUNCTIONS --------------------------------------------------------------------
 
@@ -829,6 +830,82 @@ prep_viral_load_kp_agyw <- function(df, cntry){
   return(df_viz)
 }
 
+#Adapted from hardapoart
+# vlc/s trends by age and snu
+prep_viral_load_snu_age <- function(df, cntry, pd_hist = 5) {
+  
+  #clean exit if no data
+  if(cntry %ni% unique(df$country))
+    return(NULL)
+  
+  # Filter
+  df_tx <- df %>% 
+    clean_indicator() %>%
+    filter(
+      country == cntry,
+      indicator %in% c("TX_CURR", "TX_PVLS", "TX_PVLS_D"),
+      standardizeddisaggregate %in% c("Age/Sex/HIVStatus", 
+                                      "Age/Sex/Indication/HIVStatus")) %>%
+    mutate(snu1 = stringr::str_replace_all(snu1, "_", ""))
+  
+  if(nrow(df_tx) == 0)
+    return(NULL)
+  
+  # Summarise results by age - bands
+  df_tx <- df_tx %>%
+    select(-cumulative, -targets) %>% 
+    filter(ageasentered != "Unknown Age") %>% 
+    mutate(age = case_when(
+      trendscoarse == "<15" ~ trendscoarse,
+      ageasentered == "15-19" ~ ageasentered,
+      ageasentered %in% "20-24" ~ ageasentered,
+      TRUE ~ "25+")) %>% 
+    group_by(fiscal_year, operatingunit, country, snu1, indicator, age) %>%
+    #summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>%
+    #summarise(across(where(is.numeric), sum, na.rm = TRUE), .groups = "drop") %>%
+    summarise(qtr1 = sum(qtr1, na.rm = TRUE), 
+              qtr2 = sum(qtr2, na.rm = TRUE),
+              qtr3 = sum(qtr3, na.rm = TRUE),
+              qtr4 = sum(qtr4, na.rm = TRUE),
+              .groups = "drop") %>%
+    reshape_msd() 
+  
+  if(nrow(df_tx) == 0)
+    return(NULL)
+  
+  # Reshape long and calculate VLC/S
+  df_vl <- df_tx %>% 
+    select(-period_type) %>% 
+    pivot_wider(names_from = indicator, values_from = value) %>% 
+    rename_with(str_to_lower) %>% 
+    group_by(operatingunit, country, snu1, age) %>% 
+    mutate(
+      vlc = tx_pvls_d / dplyr::lag(tx_curr, 2, order_by = period),
+      vls = tx_pvls / tx_pvls_d, 
+      age_snu = glue::glue("{snu1} | {age}")) %>% 
+    ungroup()
+  
+  ## Limits history to last 5 quaters
+  
+  hist_pds <- df_vl %>% 
+    distinct(period) %>% 
+    arrange(desc(period)) %>% 
+    pull() 
+  
+  # reset pd hisory to 4 for anything outside of 2:8
+  if (pd_hist <= 1 | pd_hist > length(hist_pds)) {
+    usethis::ui_warn(glue::glue("History length ({pd_hist}) is behind 1 and {length(hist_pds)}. Value was reset to 4."))
+    pd_hist <- 4
+  }
+  
+  hist_pds <- hist_pds %>% 
+    magrittr::extract(1:pd_hist) %>% 
+    sort()
+  
+  df_vl %>% 
+    filter(period %in% hist_pds)
+}
+
 # VIZ ---------------------------------------------------------------------
 
 # Adapted from hardapoart
@@ -982,4 +1059,60 @@ viz_viral_load_kp_agyw <- function(df){
           strip.text = element_markdown(),
           panel.spacing = unit(.5, "picas"))
   
+}
+
+#Adapted from hardapoart
+# vlc/s trends by age and snu
+viz_viral_load_snu <- function(df, save = F) {
+  
+  if(is.null(df) || nrow(df) == 0)
+    return(print(paste("No data available.")))
+  
+  ref_id <- "5ca95c24"
+  vrsn <- 1 
+  
+  # Filter all SNUs with > 95% VLS
+  n_snu <- df %>% 
+    distinct(snu1) %>% 
+    pull() %>% 
+    length()
+  
+  cap_note <- ""
+  
+  if (n_snu > 12) {
+    snus <- df %>% 
+      dplyr::filter(period == max(period), vls < .95) %>% 
+      dplyr::slice_max(order_by = vls, n = 12)  %>% 
+      dplyr::distinct(snu1) %>% 
+      dplyr::pull()
+    
+    df <- df %>% 
+      dplyr::filter(snu1 %in% snus)
+    
+    cap_note <- "Note: Limited to the 12 lowest PSNUs with VLS < 95%\n"
+  }
+  
+  # Generate the plot
+  df %>% 
+    ggplot(aes(x = period, group = 1)) +
+    geom_line(aes(y = vlc), color = burnt_sienna, linewidth = 1, na.rm = TRUE) +
+    geom_point(aes(y = vlc), fill = burnt_sienna, color = grey10k, 
+               shape = 21, size = 2, na.rm = TRUE) +
+    geom_line(aes(y = vls), color = genoa, linewidth = 1, na.rm = TRUE) +
+    geom_point(aes(y = vls), fill = genoa, color = grey10k, 
+               shape = 21, size = 2, na.rm = TRUE) +
+    facet_wrap(~age_snu, ncol = 4) +
+    scale_y_continuous(labels = percent) +
+    labs(x = "", y = "",
+         title = glue::glue("{toupper(unique(df_vlcs_snu_age$country))} - VIRAL LOAD TRENDS by SNU AND AGE"),
+         subtitle = glue::glue("VL <span style='color:{burnt_sienna}'>Coverage</span> & <span style='color:{genoa}'>Suppression</span> for the last 5 quarters"),
+         caption = glue::glue("{cap_note} 
+                              {metadata_msd_psnu$caption} | USAID/OHA/SIEI |  Ref id: {ref_id} v{vrsn}")) +
+    coord_cartesian(clip = "off") +
+    si_style_ygrid() +
+    theme(plot.title = element_markdown(),
+          plot.subtitle = element_markdown(),
+          strip.text = element_text(size = 12, face = "italic"),
+          strip.placement = "outside",
+          panel.spacing = unit(0, "lines"))
 }

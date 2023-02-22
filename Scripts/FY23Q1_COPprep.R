@@ -1,6 +1,6 @@
 # PROJECT:  si_ssd
 # AUTHOR:   J.Hoehner | USAID
-# PURPOSE:  practice with COP22 viz
+# PURPOSE:  COP22 viz
 # REF ID:   5eedfd8a 
 # LICENSE:  MIT
 # DATE:     2023-01-24
@@ -175,6 +175,10 @@
             fill_color = ifelse(vlc > 0.56, scooter, scooter_light), 
             color_bar = ifelse(period == metadata$curr_pd, scooter, trolley_grey_light))
    
+   # VLC/VLS by SNU and age
+   # needs psnu df, cntry, pd_hist = 5
+   df_vlcs_snu_age <- prep_viral_load_snu_age(psnu_df, "South Sudan")
+   
    #identify where 80% of TX_CURR is for viz facet
    df_grps_adj <- df_vls_grp %>% 
      count(snu1, mech_name, wt = tx_curr) %>% 
@@ -251,5 +255,13 @@
    viz_viral_load_kp_agyw(df_msd_AGYW)
    
    si_save(glue("Images/SSD_VLC_VLS_gaps_AGYW-nonAGYW.png"),
+           scale = 1.3) 
+   
+   # Adapted from hardapoart
+   # VLC/S by age and SNU
+   # needs df from prep_viral_load_snu_age and can save T/F
+   viz_viral_load_snu(df_vlcs_snu_age, save = T)
+   
+   si_save(glue("Images/SSD_VLC_VLS_age_snu.png"),
            scale = 1.3) 
  
