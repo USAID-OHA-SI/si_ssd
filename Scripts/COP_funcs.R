@@ -846,8 +846,7 @@ prep_viral_load_snu_age <- function(df, cntry, pd_hist = 5) {
       indicator %in% c("TX_CURR", "TX_PVLS", "TX_PVLS_D"),
       standardizeddisaggregate %in% c("Age/Sex/HIVStatus", 
                                       "Age/Sex/Indication/HIVStatus")) %>%
-    mutate(snu1 = stringr::str_replace_all("_Military South Sudan", 
-                                             "Military South Sudan"))
+    mutate(snu1 = stringr::str_replace_all(snu1, "_", ""))
   
   if(nrow(df_tx) == 0)
     return(NULL)
@@ -1094,41 +1093,26 @@ viz_viral_load_snu <- function(df, save = F) {
   }
   
   # Generate the plot
-  viz <- df %>% 
+  df %>% 
     ggplot(aes(x = period, group = 1)) +
     geom_line(aes(y = vlc), color = burnt_sienna, linewidth = 1, na.rm = TRUE) +
     geom_point(aes(y = vlc), fill = burnt_sienna, color = grey10k, 
-               shape = 21, size = 3.5, na.rm = TRUE) +
-    geom_text_repel(aes(y = vlc, label = percent(vlc, 1)), 
-                    family = "Source Sans Pro", max.overlaps = 50, force = 10,
-                    size = 3, color = burnt_sienna, na.rm = TRUE) +
+               shape = 21, size = 2, na.rm = TRUE) +
     geom_line(aes(y = vls), color = genoa, linewidth = 1, na.rm = TRUE) +
     geom_point(aes(y = vls), fill = genoa, color = grey10k, 
-               shape = 21, size = 3.5, na.rm = TRUE) +
-    geom_text_repel(aes(y = vls, label = percent(vls, 1)), 
-                    family = "Source Sans Pro", max.overlaps = 50, force = 10,
-                    size = 3, color = genoa, na.rm = TRUE) +
+               shape = 21, size = 2, na.rm = TRUE) +
+    facet_wrap(~age_snu, ncol = 4) +
     scale_y_continuous(labels = percent) +
     labs(x = "", y = "",
-         title = glue::glue("{toupper(unique(df$country))} - VIRAL LOAD TRENDS by SNU AND AGE"),
+         title = glue::glue("{toupper(unique(df_vlcs_snu_age$country))} - VIRAL LOAD TRENDS by SNU AND AGE"),
          subtitle = glue::glue("VL <span style='color:{burnt_sienna}'>Coverage</span> & <span style='color:{genoa}'>Suppression</span> for the last 5 quarters"),
-         caption = glue::glue("{metadata_msd_psnu$caption} | USAID/OHA/SIEI |  Ref id: {ref_id} v{vrsn}")) +
+         caption = glue::glue("{cap_note} 
+                              {metadata_msd_psnu$caption} | USAID/OHA/SIEI |  Ref id: {ref_id} v{vrsn}")) +
     coord_cartesian(clip = "off") +
-    facet_wrap(~snu1, ncol = 4) +
-    si_style_nolines() +
+    si_style_ygrid() +
     theme(plot.title = element_markdown(),
           plot.subtitle = element_markdown(),
-          axis.text.y = element_blank(),
-          strip.text = element_text(size = 12, face = "bold"),
-          strip.clip = "off",
+          strip.text = element_text(size = 12, face = "italic"),
           strip.placement = "outside",
           panel.spacing = unit(0, "lines"))
-  
-  print(viz)
-  
-  if (save) {
-    glitr::si_save(
-      plot = viz,
-      filename = glue::glue("./Images/{max(df$period)} - {toupper(unique(df$country)} VLCS Trends by SNU and Age.png"))
-  }
 }
