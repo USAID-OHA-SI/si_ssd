@@ -62,7 +62,7 @@
     clean_agency() %>%
     # add in agency agg and reshape
     group_by(fiscal_year, indicator, otherdisaggregate) %>% 
-    summarise(across(starts_with("qtr"), sum, na.rm = TRUE), .groups = "drop") %>% 
+    summarise(across(starts_with("qtr"), \(x) sum(x, na.rm = TRUE)), .groups = "drop") %>% 
     reshape_msd() %>% 
     filter(value > 0) %>%
     # create group for o3mo and o6mo via reshaping for plotting
