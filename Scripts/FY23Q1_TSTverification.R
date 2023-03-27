@@ -35,6 +35,12 @@
   tst_path <- "1qOu3UXgxZ5od0nk4Xo6MrirtVaCztR2xs4ltx884Gns"
   
   tst <- read_sheet(tst_path, skip = 1, col_names = TRUE)
+  
+  age_xwalk_path <- here::here("Data/")
+  
+  age_map <- age_xwalk_path %>% 
+    return_latest("age_mapping.xlsx") %>% 
+    readxl::read_xlsx()
 
 # MUNGE -----------------------------------------------------------------------
 
@@ -44,21 +50,13 @@
     resolve_knownissues() %>%
     clean_indicator() %>%
     filter(indicator %in% c("TX_CURR"),
+           fiscal_year == 2022,
            str_detect(standardizeddisaggregate, "Age/Sex/") == TRUE) %>%
-    mutate(
-      # create age group variabel to align with groupings in TST
-      age = case_when(
-        ageasentered == "<01" ~ "<01",
-        (ageasentered == "01-04" |  ageasentered == "05-09") ~ "01-09",
-        ageasentered == "10-14"  ~ "10-14",
-        (ageasentered == "15-19" | ageasentered == "20-24") ~ "15-24",
-        (ageasentered == "25-29" | ageasentered == "30-34") ~ "25-34",
-        (ageasentered == "35-39" | ageasentered == "40-44" |
-           ageasentered == "45-49") ~ "35-49",
-        (ageasentered == "50-54" | ageasentered == "55-59" |
-           ageasentered == "60-64") ~ "50+")) %>%
-    # remove other age groups
-    drop_na(age) %>%
+    left_join(age_map, by = c("indicator", "ageasentered" = "age_msd")) %>% 
+    mutate(age = ifelse(is.na(age_dp), ageasentered, age_dp)) %>% 
+    select(-c(ageasentered, age_dp)) %>% 
+    group_by(across(-c(cumulative, targets))) %>% 
+    summarise(across(c(cumulative, targets), sum, na.rm = TRUE), .groups = "drop") %>% 
     group_by(fiscal_year, psnu, indicator, age, sex) %>%
     summarize(
       fy22q4_MER = sum(cumulative, na.rm = TRUE)) %>%
@@ -128,15 +126,4 @@
     
     mismatches %>%
     write_sheet("1U7Mq8oQuAL2SHi-5EMLV_97o-_Lbcd6vcN2VZE6GfVU", "Sheet 1")
-    
-
-  
-  
-  
-  
-  
-  
-  
-  
-  
   
