@@ -15,7 +15,7 @@
 # GLOBAL VARIABLES ------------------------------------------------------------
   
   ref_id <- "5eedfd8a"
-  ou_path <- "OU_IM_South_Sudan"
+  ou_path <- "OU_IM"
   psnu_path <- "Genie_PSNU_IM_South_Sudan"
   authors <- "Jessica Hoehner"
 
@@ -51,7 +51,8 @@
   # How many patients on 6MMD across PEPFAR?
   
   df_mmd <- ou_df %>% 
-    filter(indicator == "TX_CURR",
+    filter(operatingunit == "South Sudan", 
+           indicator == "TX_CURR",
            fiscal_year >= 2021,
            standardizeddisaggregate %in% 
              c("Total Numerator", "Age/Sex/ARVDispense/HIVStatus")) %>% 
