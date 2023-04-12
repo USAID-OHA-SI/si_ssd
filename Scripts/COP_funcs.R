@@ -906,6 +906,69 @@ prep_viral_load_snu_age <- function(df, cntry, pd_hist = 5) {
     filter(period %in% hist_pds)
 }
 
+# Adapted from hardapoart, population pyramid
+# https://github.com/USAID-OHA-SI/hardapoart/blob/main/Scripts/04_populationpyramid.R
+
+prep_pop_pyramid <- function(df, cntry, level){
+  
+  # clean exit if no data
+  if(cntry %ni% unique(df$country))
+    return(NULL)
+  
+  df_filt <- df %>%
+    dplyr::filter(
+      # requested to only look at FY22 for COP 23 SDS report
+      fiscal_year == "2022",
+      country == cntry, 
+      indicator %in% c("PLHIV", "POP_EST"))
+  
+  if(nrow(df_filt) == 0)
+    return(NULL)
+  
+  df_filt %>%
+    assertr::verify(indicator %in% c("PLHIV", "POP_EST") &
+                      fiscal_year == max(fiscal_year) &
+                      country == cntry,
+                    error_fun = err_text(glue::glue("Error: {df} has not been filtered correctly.
+                                               Please check the first filter in prep_pop_pyramid().")),
+                    description = glue::glue("Verify that the filters worked"))
+  
+  grp_vars <- c("fiscal_year", "country", "indicator", "sex", "ageasentered")
+  
+  if(level != "country"){
+    level_uid <- glue::glue("{level}uid")
+    grp_vars <- c(grp_vars, {level}, level_uid)
+    
+  }
+  
+  df_filt <- df_filt %>%
+    dplyr::mutate(indicator = ifelse(indicator == "POP_EST", "Population (Est)", indicator)) %>% 
+    dplyr::group_by(dplyr::pick(grp_vars)) %>%
+    dplyr::summarise(targets = sum(targets, na.rm = TRUE),
+                     .groups = "drop") %>%
+    dplyr::mutate(population = if_else(sex == "Male", -targets, targets))
+  
+  df_viz <- df_filt %>%
+    tidyr::drop_na(sex, ageasentered)
+  
+  grp_vars_viz <- c("indicator")
+  if(level != "country")
+    grp_vars <- c(grp_vars_viz, {level}, {level_uid})
+  
+  df_viz <- df_viz %>% 
+    dplyr::group_by(dplyr::across(grp_vars_viz)) %>% 
+    dplyr::mutate(axis_max = max(targets, na.rm = TRUE),
+                  axis_min = -axis_max) %>% 
+    dplyr::ungroup()
+  
+  df_viz <- df_viz %>% 
+    dplyr::mutate(facet_grp = forcats::fct_rev(indicator))
+  
+  return(df_viz)
+  
+}
+
+
 # VIZ ---------------------------------------------------------------------
 
 # Adapted from hardapoart
@@ -1115,4 +1178,79 @@ viz_viral_load_snu <- function(df, save = F) {
           strip.text = element_text(size = 12, face = "italic"),
           strip.placement = "outside",
           panel.spacing = unit(0, "lines"))
+}
+
+# Adapted from hardapoart, pop pyramid
+viz_pop_pyramid <- function(df, type = NULL){
+  
+  q <- glue::glue("South Sudan | Population Pyramid 2022") %>% toupper
+  
+  if(is.null(df) || nrow(df) == 0)
+    return(dummy_plot(q))
+  
+  q <- stringr::str_replace(q, "THE COUNTRY", toupper(unique(df$country)))
+  
+  ref_id <- "aa8bd5b4"
+  #updated version number to reflect changes have been made since pre-COP visuals
+  vrsn <- 2.1
+  
+  subt <-  glue::glue("Comparison between <span style='color:{genoa}'>Males</span> & <span style='color:{moody_blue}'>Females</span> by age band")
+               
+  cap_note <- glue::glue("Note: Age Groups with fewer than ,2300 people per group not shown.
+                                Ages <01: 713 Females and 748 Males
+                                Ages 10-14: 2,165 Females and 2,240 Males")
+  
+  f_nrow <- 1
+  
+  # Display only a subset of PSNUs
+  if("psnuuid" %in% names(df)){
+    df_psnus <- df %>% 
+      dplyr::filter(indicator == "Population (Est)") 
+    
+    n_max <- 8
+    
+    cap_note <- ifelse(length(unique(df_psnus$psnuuid)) > n_max, "Note: Limited to the largest PSNUs by Population (Est) \n", "")
+    
+    v_lim_uids <- df_psnus %>% 
+      dplyr::count(psnuuid, wt = targets, name = "targets", sort = TRUE) %>% 
+      dplyr::slice_head(n = n_max) %>%  
+      dplyr::pull(psnuuid)
+    
+    f_nrow <- ifelse(length(v_lim_uids) > 4, 2, 1)
+    
+    df <- dplyr::filter(df, psnuuid %in% v_lim_uids) 
+  }
+  
+  
+  df %>%
+    ggplot2::ggplot(aes(population, ageasentered, fill = sex)) +
+    ggplot2::geom_blank(aes(axis_max)) +
+    ggplot2::geom_blank(aes(axis_min)) +
+    ggplot2::geom_col(alpha = .8, na.rm = TRUE) +
+    ggplot2::geom_vline(aes(xintercept = 0), color = "white", linewidth = 1.1)+
+    # labels were running together and instead of fighting with vjust for another
+    # hour or two I just filtered it by number and added a caption
+    ggplot2::geom_text(aes(label = if_else(targets > 2300,
+      scales::comma(targets), "")), na.rm = TRUE,
+                       family = "Source Sans Pro", color = "white",
+                       size = 10/.pt, position = position_stack(vjust = 0.5)) +
+    ggplot2::facet_wrap(~facet_grp, scales = "free_x", nrow = f_nrow) +
+    ggplot2::scale_fill_manual(values = c("Male" = glitr::genoa, 
+                                          "Female" = glitr::moody_blue)) +
+    ggplot2::scale_x_continuous(
+      labels = function(x) {glue("{label_number(scale_cut = cut_short_scale())(abs(x))}")}, 
+    ) +
+    ggplot2::labs(title = {q},
+                  subtitle =  {subt},
+                  x = NULL, y = NULL, fill = NULL,
+                  caption = 
+                    glue("{cap_note}
+                         {metadata_natsubnat$caption} | USAID/OHA/SIEI |  Ref id: {ref_id} v{vrsn}")) +
+    glitr::si_style_yline() +
+    ggplot2::theme(
+      legend.position = "none",
+      strip.text = element_text(hjust = .5),
+      plot.subtitle = element_markdown(),
+      panel.spacing = unit(.2, "picas"))
+  
 }
