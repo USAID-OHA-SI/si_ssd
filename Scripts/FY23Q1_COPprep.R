@@ -103,7 +103,7 @@
            indicator %in% c("TX_CURR_SUBNAT", "PLHIV"),
            standardizeddisaggregate == "Age/Sex/HIVStatus") %>%
     group_by(operatingunit, fiscal_year, trendscoarse, indicator) %>%
-    summarise(across(targets, sum, na.rm = TRUE)) %>%
+    summarise(across(targets, \(x) sum(x, na.rm = TRUE))) %>%
     pivot_wider(names_from = indicator, values_from = targets) %>%
     mutate(
       fiscal_year = as.character(fiscal_year),
