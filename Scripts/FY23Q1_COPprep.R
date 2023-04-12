@@ -203,6 +203,10 @@
    # requested to keep only AGYW/non-AGYW
    df_msd_AGYW <- df_msd_kp_agyw %>%
      filter(group == "AGYW")
+   
+   # Update population pyramid for FY22
+   
+   df_pop <- prep_pop_pyramid(df_nat, "South Sudan", "country")
 
 # VIZ --------------------------------------------------------------------------
   
@@ -264,5 +268,11 @@
    viz_viral_load_snu(df_vlcs_snu_age, save = T)
    
    si_save(glue("Images/SSD_VLC_VLS_age_snu.png"),
+           scale = 1.3) 
+   
+   # Population Pyramid for FY22
+   viz_pop_pyramid(df_pop)
+   
+   si_save(glue("Images/SSD_PLHIV_POP Pyramids_2022.png"),
            scale = 1.3) 
  
