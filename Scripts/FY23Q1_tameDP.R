@@ -29,6 +29,10 @@
   tst_path <- path  %>%
     return_latest("DATA_PACK_South Sudan")
   
+  # PSNUxIM
+  tst_psnuim_path <- path  %>%
+    return_latest("South Sudan_PSNUxIM")
+  
   psnu_path <- si_path() %>%
     return_latest("Genie_PSNU_IM_South_Sudan")
   
@@ -41,6 +45,10 @@
   tst_df <- path %>%
     return_latest("DATA_PACK_South Sudan") %>%
     tame_dp()
+  
+  tst_psnuim <- path %>%
+    return_latest("South Sudan_PSNUxIM") %>%
+    tame_dp(type = "PSNUxIM") 
   
   msd_df <- si_path() %>%
     return_latest("Genie_PSNU_IM_South_Sudan") %>%
@@ -103,17 +111,40 @@
     rename(
       cumulative_msd = cumulative,
       targets_msd = targets)
+  
+  # munge 2022 COP targets and results for TX_CURR
+  
+  msd_2022 <- msd_df %>%
+    group_by(
+      operatingunit, country,psnu,fiscal_year,indicator) %>%
+    summarise(across(c(cumulative, targets), \(x) sum(x, na.rm = TRUE)), 
+              .groups = "drop") %>%
+    filter(indicator == "TX_CURR", 
+           fiscal_year == "2022") %>%
+    mutate(psnu = if_else(psnu == "_Military South Sudan", "Military", psnu), 
+           targets = as.numeric(targets),
+           psnu = fct_reorder(factor(psnu), targets, .desc = FALSE))
+  
+  tst_2023 <- tst_psnuim %>%
+    mutate(fiscal_year = as.character(fiscal_year), 
+           targets = as.numeric(targets)) %>%
+    filter(indicator == "TX_CURR") %>%
+    group_by(
+      operatingunit, country,psnu,fiscal_year,indicator) %>%
+    summarise(across(c(cumulative, targets), \(x) sum(x, na.rm = TRUE)), 
+              .groups = "drop") %>%
+    mutate(psnu = if_else(psnu == "_Military South Sudan", "Military", psnu), 
+           psnu = fct_reorder(factor(psnu), as.numeric(targets), .desc = FALSE))
 
-  # combine + compare
+  # combine + compare ----------------------------------------------------------
   
   combined <- full_join(tst_psnu, msd_psnu, by = c("country","psnu","fiscal_year",
                                                    "indicator","snuprioritization",
                                                    "standardizeddisaggregate",
-                                                   "age", "sex")) %>%
-    replace_na()
+                                                   "age", "sex")) 
   
     write_sheet(combined, "18dNyrg6tseuXJHA-SynmuwCVi_9DaBFZx1pch3rlhsI", 
-                "Checkpoint 1")
+                "Checkpoint 2")
   
   #matches
   comb_matches_tgts <- combined %>%
@@ -121,7 +152,7 @@
       targets_tst == targets_msd)
   
     write_sheet(comb_matches_tgts, "1IvLeqJWcPqeJ84HlWN6yt2hx5d0WCl3osUh6msemgF4", 
-                "Checkpoint 1")
+                "Checkpoint 2")
     
   #matches
   comb_matches_cml <- combined %>%
@@ -129,7 +160,7 @@
       cumulative_msd == cumulative_tst)
   
     write_sheet(comb_matches_cml, "11lK3RWXAapwl4FpIRp5wRtVH1qMjJcL7gVKwTsUM96Y", 
-                "Checkpoint 1")
+                "Checkpoint 2")
   
   #mismatches
   comb_mismatches_tgts <- combined %>%
@@ -137,7 +168,7 @@
       targets_tst != targets_msd)
   
     write_sheet(comb_mismatches_tgts, "1XWQKWGeyusokL0Z9Jv56KZOhhin9kA_OAttuzFir93w", 
-                "Checkpoint 1")
+                "Checkpoint 2")
   
   #mismatches
   comb_mismatches_cml <- combined %>%
@@ -145,7 +176,50 @@
       cumulative_msd != cumulative_tst)
   
     write_sheet(comb_mismatches_cml, "1zL9xUKECyQdhYNjFyfVWAH9YEHknEYSeUMPeDF8boKA", 
-                "Checkpoint 1")
+                "Checkpoint 2")
+    
+# check PSNUxIM tab ------------------------------------------------------------
+
+    cop_23 <- tst_2023 %>%
+      ggplot(aes(y = psnu)) +
+      geom_col(aes(x = as.numeric(targets)), fill = genoa, alpha = 0.7) +
+      scale_fill_identity() +
+      scale_y_discrete() +
+      scale_x_continuous(label = scales::label_number(scale_cut = scales::cut_short_scale()),
+                         expand = c(.005, .005)) +
+      labs(x = NULL, y = NULL,
+           title = "COP23 TX_CURR Targets",
+           subtitle = "",
+           caption = glue::glue(
+             "Source: COP 23 PSNUxIM tab April 14 2023 ", .sep = " | ")) +
+      si_style_ygrid() +
+      theme(legend.position = "none",
+            strip.text.x = element_text(family = "Source Sans Pro SemiBold", size = 13))
+    
+    cop_22 <- msd_2022 %>%
+      ggplot(aes(y = psnu)) +
+      geom_col(aes(x = as.numeric(targets)), fill = genoa, alpha = 0.7) +
+      scale_fill_identity() +
+      scale_y_discrete() +
+      scale_x_continuous(label = scales::label_number(scale_cut = scales::cut_short_scale()),
+                         expand = c(.005, .005)) +
+      labs(x = NULL, y = NULL,
+           title = "COP22 TX_CURR Targets",
+           subtitle = "",
+           caption = glue::glue(
+             "Source: FY23Q1c MSD",
+             "USAID SI Analytics, ref id = {ref_id}", .sep = " | ")) +
+      si_style_ygrid() +
+      theme(legend.position = "none",
+            strip.text.x = element_text(family = "Source Sans Pro SemiBold", size = 13))
+    
+    
+    cowplot::plot_grid(cop_22,
+                       cop_23, 
+                       ncol = 2, 
+                       align = "hv", axis = "bt", rel_heights = c(1, 1))
+    
+    si_save("Images/COP_22_23_TX_CURR_targets.png")
     
 # using tameDP to combine and look at targets across time ----------------------
     
@@ -154,7 +228,6 @@
     
     df_msd_tst <- msd_final %>%
       bind_rows(tst_df)
-    
     
     # spot check with combination method above 
     # note that this will result in 2 rows:
@@ -170,4 +243,5 @@
              sex == "Female")
     
     #ask KS about this     
+
     
