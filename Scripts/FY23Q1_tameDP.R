@@ -18,6 +18,9 @@
   # export to google sheets
   library(googlesheets4)
 
+  # for making the table
+  library(gt)
+
 # GLOBAL VARIABLES ------------------------------------------------------------
   
   ref_id <- "9316532e"
@@ -135,6 +138,28 @@
               .groups = "drop") %>%
     mutate(psnu = if_else(psnu == "_Military South Sudan", "Military", psnu), 
            psnu = fct_reorder(factor(psnu), as.numeric(targets), .desc = FALSE))
+  
+  # indicator targets by year
+  
+  all_inds <- tst_df %>%
+    group_by(
+      fiscal_year,indicator) %>%
+    summarize(
+      targets = scales::comma(sum(targets)),
+      cumulative = scales::comma(sum(cumulative))) %>%
+    mutate(
+      targets = replace_na(as.character(targets), "-"), 
+      cumulative = replace_na(as.character(cumulative), "-")) %>%
+    gt::gt() %>%
+    # add custom title
+    tab_header(
+      title = "South Sudan: Targets and Results") %>%
+    tab_footnote("Source: South Sudan Target Setting Tool v.5 | USAID SI Analytics") %>%
+    # relabel columns nicely
+    cols_label( 
+      indicator = "Indicator",
+      targets = "Targets", 
+      cumulative = "Results")
 
   # combine + compare ----------------------------------------------------------
   
